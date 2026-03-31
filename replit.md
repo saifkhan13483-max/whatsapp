@@ -52,22 +52,134 @@ Full-featured WhatsApp activity monitoring & parental control app.
 - **Subscription**: Plan management UI
 - **Keyword Alerts**: Add/manage keywords for content monitoring
 - **Contact Groups**: Organize contacts into groups
+- **Geofence Zones**: Location-based monitoring zones
+- **Activity Timeline**: Full day timeline for all contacts
+- **Contact Comparison**: Side-by-side contact activity comparison
 
 ### Tech
 - Expo Router (file-based routing)
 - React Query for server state
-- Inter font family
+- Inter font family (@expo-google-fonts/inter)
 - WhatsApp-inspired dark green color palette
-- `useColors()` hook for all theming
+- `useColors()` hook for all theming (never hardcode hex values)
 - Liquid glass tab bars on iOS 26+, BlurView fallback on older iOS/Android
-- AsyncStorage for persistence
+- AsyncStorage for persistence (theme, onboarding, biometric lock, favorites, DND)
 - Expo Haptics for feedback
+- Expo Local Authentication for biometric lock
+- Expo Notifications for push notifications
+- Expo Secure Store for sensitive tokens
+- react-native-gesture-handler for swipe actions
+- react-native-toast-message for toasts
+- date-fns for time formatting
 
 ### Design Tokens (constants/colors.ts)
 - Primary: #25D366 (WhatsApp green)
 - Dark: #128C7E / Darkest: #075E54
 - Blue accent: #34B7F1, Purple: #7C4DFF
 - Dark background: #0b141a, Dark surface: #111b21
+
+## Backend API Server
+
+Express 5 REST API running on port 8080.
+
+### Workflows
+- **Start Backend**: `cd artifacts/api-server && PORT=8080 pnpm run dev`
+- **Start application**: `cd artifacts/mobile && pnpm run dev`
+
+### Implemented API Routes (Section 2 - Complete)
+
+**Auth:**
+- POST /api/auth/register
+- POST /api/auth/login (sets httpOnly JWT cookie)
+- POST /api/auth/logout
+- GET /api/auth/me
+
+**Contacts:**
+- GET /api/contacts
+- POST /api/contacts
+- PUT /api/contacts/:id
+- DELETE /api/contacts/:id
+- GET /api/contacts/favorites
+- POST /api/contacts/:id/favorite (toggle)
+- GET /api/contacts/groups
+- POST /api/contacts/groups
+- PUT /api/contacts/groups/:id
+- DELETE /api/contacts/groups/:id
+
+**Sessions & Stats:**
+- GET /api/contacts/:id/sessions
+- GET /api/contacts/:id/stats
+- GET /api/contacts/:id/hourly
+- POST /api/contacts/:id/status
+- GET /api/contacts/:id/patterns
+
+**Chat & Media:**
+- GET /api/conversations
+- GET /api/messages/:contactId
+- GET /api/view-once
+
+**Notifications:**
+- GET /api/notifications
+- POST /api/notifications/mark-read/:id
+- POST /api/notifications/mark-all-read
+- DELETE /api/notifications/clear
+
+**Reports:**
+- GET /api/reports/:contactId
+- GET /api/reports/:contactId/export
+
+**Subscription:**
+- GET /api/subscription/plans
+- GET /api/subscription/current
+- POST /api/subscription/upgrade
+
+**Settings:**
+- GET /api/settings
+- PUT /api/settings
+- GET /api/settings/dnd
+- POST /api/settings/dnd
+- DELETE /api/settings/dnd/:id
+
+**Activity (New):**
+- GET /api/activity/family-summary
+- GET /api/activity/comparisons
+- GET /api/activity/timeline
+
+**Alerts (New):**
+- GET /api/alerts/keywords
+- POST /api/alerts/keyword
+- DELETE /api/alerts/keyword/:id
+
+**Geofence (New):**
+- GET /api/geofence/zones
+- POST /api/geofence/zones
+
+### Auth Implementation
+- JWT tokens in httpOnly cookies
+- bcryptjs for password hashing
+- requireAuth middleware in src/middlewares/auth.ts
+- CORS configured with `credentials: true`
+- cookie-parser middleware enabled
+
+## Database Schema (PostgreSQL)
+
+Tables created via SQL (drizzle-kit push didn't detect new tables):
+- users
+- contacts
+- contact_favorites
+- contact_groups
+- contact_group_members
+- activity_sessions
+- conversations
+- messages
+- view_once_media
+- notifications
+- subscription_plans
+- user_subscriptions
+- user_settings
+- dnd_rules
+- keyword_alerts
+- geofence_zones
 
 ## TypeScript & Composite Projects
 
@@ -82,15 +194,15 @@ Every package extends `tsconfig.base.json` which sets `composite: true`.
 
 ### `artifacts/mobile` (`@workspace/mobile`)
 
-Expo mobile app. Entry: `app/_layout.tsx`. Providers: SafeAreaProvider, QueryClientProvider, ThemeProvider, AuthProvider.
+Expo mobile app. Entry: `app/_layout.tsx`. Providers: SafeAreaProvider, QueryClientProvider, ThemeProvider, AuthProvider, NotificationProvider.
 
 ### `artifacts/api-server` (`@workspace/api-server`)
 
-Express 5 API server on port 8080. Routes in `src/routes/`.
+Express 5 API server. Runs on PORT env var (set to 8080 in workflow). Routes in `src/routes/`. Auth middleware in `src/middlewares/auth.ts`. Build script externalizes drizzle-orm and pg (available in node_modules), bundles all else.
 
 ### `lib/db` (`@workspace/db`)
 
-Database layer using Drizzle ORM with PostgreSQL.
+Database layer using Drizzle ORM with PostgreSQL. Schema in `src/schema/index.ts`. All 16 tables defined.
 
 ### `lib/api-spec` (`@workspace/api-spec`)
 
@@ -105,3 +217,9 @@ Generated Zod schemas.
 ### `lib/api-client-react` (`@workspace/api-client-react`)
 
 Generated React Query hooks.
+
+## Environment Variables
+
+- `DATABASE_URL` — PostgreSQL connection string (auto-provisioned)
+- `JWT_SECRET` — JWT signing secret (set in shared env)
+- `PORT` — Server port (set per workflow)
