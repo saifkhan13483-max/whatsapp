@@ -125,8 +125,7 @@ export async function requestPairingCode(
     throw makeApiError("Invalid phone number. Please include your country code.", 400);
   }
 
-  // ROOT CAUSE 1 & 4: Destroy any existing socket and clear stale session data
-  // from the DB so creds.registered is fresh and won't cause WhatsApp rejections
+  // Destroy any in-memory socket for this user first
   await destroySocket(userId);
 
   if (existingSession.length > 0) {
@@ -136,7 +135,20 @@ export async function requestPairingCode(
       .where(eq(whatsappSessionsTable.userId, userId));
   }
 
-  const sessionDir = getSessionDir(userId);
+  // CRITICAL FIX: Always wipe and recreate the session directory unconditionally.
+  // destroySocket() only cleans up files when an entry exists in activeSockets
+  // (the in-memory map). After a server restart, activeSockets is empty even
+  // though stale creds.json files remain in /tmp. Those stale creds contain
+  // `me.id` from a previous failed attempt, which makes Baileys do a passive
+  // (reconnection) login instead of a fresh pairing — WhatsApp rejects that
+  // with a 401. Wiping the dir here guarantees a truly fresh auth state every
+  // single time, regardless of restarts or prior failures.
+  const sessionDir = path.join(os.tmpdir(), `wa_session_${userId}`);
+  try {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  } catch {}
+  fs.mkdirSync(sessionDir, { recursive: true });
+
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
   // Fetch latest supported Baileys version from WhatsApp servers
@@ -173,7 +185,7 @@ export async function requestPairingCode(
 
     const timeout = setTimeout(() => {
       if (!codeObtained) {
-        cleanup();
+        cleanup(true);
         reject(
           makeApiError(
             "Could not reach WhatsApp. Please check your internet connection and try again.",
@@ -183,9 +195,18 @@ export async function requestPairingCode(
       }
     }, PAIRING_REQUEST_TIMEOUT_MS);
 
-    function cleanup() {
+    function cleanup(shouldDestroySocket = false) {
       clearTimeout(timeout);
       sock.ev.removeAllListeners("connection.update");
+      if (shouldDestroySocket) {
+        // End the socket and remove from map so the next attempt starts fresh.
+        // This also prevents any pending saveCreds from writing more stale data.
+        try { sock.end(undefined); } catch {}
+        activeSockets.delete(userId);
+        try {
+          fs.rmSync(sessionDir, { recursive: true, force: true });
+        } catch {}
+      }
     }
 
     sock.ev.on("connection.update", async (update) => {
@@ -206,7 +227,7 @@ export async function requestPairingCode(
           const code = await sock.requestPairingCode(cleanPhone);
 
           if (!code) {
-            cleanup();
+            cleanup(true);
             reject(makeApiError("WhatsApp returned an empty code. Please try again.", 502));
             return;
           }
@@ -249,7 +270,7 @@ export async function requestPairingCode(
           resolve({ pairingCode: code, expiresAt: expiresAt.toISOString() });
         } catch (err: any) {
           if (!codeObtained) {
-            cleanup();
+            cleanup(true);
             const msg: string = err?.message ?? "WhatsApp server error";
             const lowerMsg = msg.toLowerCase();
             const boomStatus = (err as Boom)?.output?.statusCode;
@@ -317,7 +338,7 @@ export async function requestPairingCode(
         }
 
         if (!codeRequested) {
-          cleanup();
+          cleanup(true);
           const httpStatus = boomStatusCode === 401 ? 401 : 500;
           reject(
             makeApiError("Could not connect to WhatsApp. Please try again.", httpStatus)
