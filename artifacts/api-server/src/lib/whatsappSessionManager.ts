@@ -195,9 +195,11 @@ export async function requestPairingCode(
         entry.connectionAccepted = true;
       }
 
-      // ROOT CAUSE 1 FIX: Only call requestPairingCode when socket is in
-      // 'connecting' state OR a QR is available — NEVER before this point.
-      if ((connection === "connecting" || !!qr) && !codeRequested) {
+      // Only call requestPairingCode when WhatsApp has sent the pair-device IQ
+      // (!!qr). This fires AFTER the WebSocket is open and the noise handshake
+      // is complete — the only safe moment. "connecting" fires via
+      // process.nextTick() before the WebSocket even opens, causing a 428.
+      if (!!qr && !codeRequested) {
         codeRequested = true;
 
         try {
