@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
+import { Platform } from "react-native";
+import { router } from "expo-router";
 
 let Notifications: typeof import("expo-notifications") | null = null;
 try {
@@ -39,21 +41,40 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     checkPermission();
 
     notificationListener.current = Notifications.addNotificationReceivedListener(() => {});
-    responseListener.current = Notifications.addNotificationResponseReceivedListener(() => {});
+
+    responseListener.current = Notifications.addNotificationResponseReceivedListener((response) => {
+      handleNotificationTap(response.notification.request.content.data);
+    });
 
     return () => {
-      if (Notifications && notificationListener.current) {
-        Notifications.removeNotificationSubscription(
-          notificationListener.current as import("expo-notifications").EventSubscription
-        );
-      }
-      if (Notifications && responseListener.current) {
-        Notifications.removeNotificationSubscription(
-          responseListener.current as import("expo-notifications").EventSubscription
-        );
-      }
+      try {
+        (notificationListener.current as any)?.remove?.();
+      } catch {}
+      try {
+        (responseListener.current as any)?.remove?.();
+      } catch {}
     };
   }, []);
+
+  function handleNotificationTap(data: Record<string, unknown>) {
+    if (!data) return;
+
+    try {
+      const type = data.type as string | undefined;
+      const contactId = data.contactId as number | string | undefined;
+      const chatId = data.chatId as number | string | undefined;
+
+      if (type === "contact" && contactId) {
+        router.push(`/contact/${contactId}` as any);
+      } else if (type === "chat" && chatId) {
+        router.push(`/chat/${chatId}` as any);
+      } else if (type === "keyword" && contactId) {
+        router.push(`/chat/${contactId}` as any);
+      } else {
+        router.push("/(tabs)/notifications" as any);
+      }
+    } catch {}
+  }
 
   async function checkPermission() {
     if (!Notifications) return;
@@ -65,6 +86,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   async function requestPermission(): Promise<boolean> {
     if (!Notifications) return false;
+    if (Platform.OS === "web") return false;
     try {
       const { status } = await Notifications.requestPermissionsAsync();
       setPermission(status as "granted" | "denied" | "undetermined");

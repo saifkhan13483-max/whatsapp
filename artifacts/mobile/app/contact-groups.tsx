@@ -5,7 +5,6 @@ import {
   FlatList,
   StyleSheet,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   TextInput,
   Alert,
   Platform,
@@ -16,16 +15,24 @@ import {
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+} from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/useColors";
 import { useContactGroups, useCreateGroup, useUpdateGroup, useDeleteGroup } from "@/hooks/useContactGroups";
 import { useContacts } from "@/hooks/useContacts";
+import { useFamilyDashboard } from "@/hooks/useFamilyDashboard";
 import { AvatarCircle } from "@/components/ui/AvatarCircle";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { typography } from "@/constants/typography";
 import { spacing } from "@/constants/spacing";
+import { formatDuration } from "@/lib/formatters";
 import type { ContactGroup } from "@/hooks/useContactGroups";
 
 interface OverlappingAvatarsProps {
@@ -85,8 +92,51 @@ const OverlappingAvatars = React.memo(function OverlappingAvatars({ names, max =
   );
 });
 
+interface GroupActivityBarProps {
+  value: number;
+  max: number;
+  color: string;
+  label: string;
+}
+
+const GroupActivityBar = React.memo(function GroupActivityBar({ value, max, color, label }: GroupActivityBarProps) {
+  const colors = useColors();
+  const progress = useSharedValue(0);
+  const pct = Math.min(value / Math.max(max, 1), 1);
+
+  React.useEffect(() => {
+    progress.value = withTiming(pct, { duration: 700, easing: Easing.out(Easing.cubic) });
+  }, [pct]);
+
+  const barStyle = useAnimatedStyle(() => ({
+    height: `${progress.value * 100}%` as any,
+  }));
+
+  return (
+    <View style={{ alignItems: "center", gap: 4, flex: 1 }}>
+      <View style={{ height: 60, width: "100%", justifyContent: "flex-end", alignItems: "center" }}>
+        <View
+          style={{
+            width: "70%",
+            height: "100%",
+            backgroundColor: colors.border,
+            borderRadius: 4,
+            overflow: "hidden",
+            justifyContent: "flex-end",
+          }}
+        >
+          <Animated.View
+            style={[{ width: "100%", backgroundColor: color, borderRadius: 4 }, barStyle]}
+          />
+        </View>
+      </View>
+      <Text style={{ fontSize: 9, fontFamily: "Inter_400Regular", color: colors.secondaryText }}>{label}</Text>
+    </View>
+  );
+});
+
 interface GroupCardProps {
-  group: ContactGroup & { memberNames?: string[] };
+  group: ContactGroup & { memberNames?: string[]; totalMinutesToday?: number };
   onPress: () => void;
   onLongPress: () => void;
 }
@@ -109,7 +159,17 @@ const GroupCard = React.memo(function GroupCard({ group, onPress, onLongPress }:
         <Ionicons name="people" size={22} color={colors.primary} />
       </View>
       <View style={{ flex: 1, gap: 6 }}>
-        <Text style={[typography.bodyMedium, { color: colors.text }]}>{group.name}</Text>
+        <View style={styles.groupTitleRow}>
+          <Text style={[typography.bodyMedium, { color: colors.text, flex: 1 }]}>{group.name}</Text>
+          {(group.totalMinutesToday ?? 0) > 0 && (
+            <View style={[styles.totalBadge, { backgroundColor: colors.primary + "18" }]}>
+              <Ionicons name="time-outline" size={11} color={colors.primary} />
+              <Text style={[styles.totalText, { color: colors.primary }]}>
+                {formatDuration(group.totalMinutesToday ?? 0)} today
+              </Text>
+            </View>
+          )}
+        </View>
         <View style={styles.groupMeta}>
           {memberNames.length > 0 ? (
             <OverlappingAvatars names={memberNames} max={5} />
@@ -127,7 +187,7 @@ const GroupCard = React.memo(function GroupCard({ group, onPress, onLongPress }:
 });
 
 interface GroupDetailModalProps {
-  group: (ContactGroup & { memberNames?: string[] }) | null;
+  group: (ContactGroup & { memberNames?: string[]; totalMinutesToday?: number; memberMinutes?: Record<number, number> }) | null;
   allContacts: Array<{ id: number; name: string }>;
   visible: boolean;
   onClose: () => void;
@@ -158,6 +218,12 @@ function GroupDetailModal({
   }, [group?.id]);
 
   if (!group) return null;
+
+  const memberMinutes = group.memberMinutes ?? {};
+  const maxMinutes = Math.max(...Object.values(memberMinutes), 1);
+
+  const days = ["M", "T", "W", "T", "F", "S", "S"];
+  const hasChartData = group.totalMinutesToday !== undefined && group.totalMinutesToday > 0;
 
   function toggleMember(id: number) {
     setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
@@ -233,7 +299,48 @@ function GroupDetailModal({
                 {selectedIds.length} member{selectedIds.length !== 1 ? "s" : ""}
               </Text>
             </View>
+            {(group.totalMinutesToday ?? 0) > 0 && (
+              <View style={[styles.detailRow, { marginTop: spacing.sm }]}>
+                <Ionicons name="time-outline" size={18} color={colors.blue} />
+                <Text style={[typography.bodyMedium, { color: colors.text }]}>
+                  Total today: {formatDuration(group.totalMinutesToday ?? 0)}
+                </Text>
+              </View>
+            )}
           </View>
+
+          {hasChartData && Object.keys(memberMinutes).length > 0 && (
+            <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[typography.labelBold, { color: colors.text, marginBottom: spacing.md }]}>
+                Member Activity Today
+              </Text>
+              <View style={styles.chartRow}>
+                {(group.memberNames ?? []).map((name, i) => {
+                  const contactId = (group.contactIds ?? [])[i];
+                  const mins = contactId ? (memberMinutes[contactId] ?? 0) : 0;
+                  return (
+                    <View key={i} style={{ flex: 1, alignItems: "center", gap: 4 }}>
+                      <AvatarCircle name={name} size={26} />
+                      <View style={[styles.memberBarTrack, { backgroundColor: colors.border }]}>
+                        <View
+                          style={[
+                            styles.memberBarFill,
+                            {
+                              height: `${Math.min((mins / maxMinutes) * 100, 100)}%` as any,
+                              backgroundColor: colors.primary,
+                            },
+                          ]}
+                        />
+                      </View>
+                      <Text style={[styles.memberBarLabel, { color: colors.secondaryText }]} numberOfLines={1}>
+                        {formatDuration(mins)}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          )}
 
           <Text style={[typography.labelBold, { color: colors.text }]}>
             {isEditing ? "Edit Members" : "Members"}
@@ -410,12 +517,13 @@ export default function ContactGroupsScreen() {
 
   const { data: groups = [], isLoading, refetch, isRefetching } = useContactGroups();
   const { data: contacts = [] } = useContacts();
+  const { data: familySummary } = useFamilyDashboard();
   const createGroup = useCreateGroup();
   const updateGroup = useUpdateGroup();
   const deleteGroup = useDeleteGroup();
 
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState<(typeof groups[0] & { memberNames?: string[] }) | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<(typeof groupsWithNames[0]) | null>(null);
 
   const contactsById = useMemo(() => {
     const map: Record<number, string> = {};
@@ -423,12 +531,28 @@ export default function ContactGroupsScreen() {
     return map;
   }, [contacts]);
 
+  const memberMinutesById = useMemo(() => {
+    const map: Record<number, number> = {};
+    familySummary?.members.forEach((m) => {
+      map[m.id] = m.minutesToday ?? 0;
+    });
+    return map;
+  }, [familySummary]);
+
   const groupsWithNames = useMemo(() =>
-    groups.map((g) => ({
-      ...g,
-      memberNames: (g.contactIds ?? []).map((id) => contactsById[id]).filter(Boolean),
-    })),
-    [groups, contactsById]
+    groups.map((g) => {
+      const memberNames = (g.contactIds ?? []).map((id) => contactsById[id]).filter(Boolean);
+      const totalMinutesToday = (g.contactIds ?? []).reduce(
+        (sum, id) => sum + (memberMinutesById[id] ?? 0),
+        0
+      );
+      const memberMinutes: Record<number, number> = {};
+      (g.contactIds ?? []).forEach((id) => {
+        memberMinutes[id] = memberMinutesById[id] ?? 0;
+      });
+      return { ...g, memberNames, totalMinutesToday, memberMinutes };
+    }),
+    [groups, contactsById, memberMinutesById]
   );
 
   const handleCreate = useCallback(async (name: string, contactIds: number[]) => {
@@ -554,6 +678,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: spacing.md,
   },
+  groupTitleRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  totalBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  totalText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   groupIconWrap: { width: 48, height: 48, borderRadius: 12, alignItems: "center", justifyContent: "center" },
   groupMeta: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   modalRoot: { flex: 1 },
@@ -574,6 +708,17 @@ const styles = StyleSheet.create({
   },
   detailCard: { borderRadius: 12, borderWidth: 1, padding: spacing.base },
   detailRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  chartCard: { borderRadius: 12, borderWidth: 1, padding: spacing.base },
+  chartRow: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm, height: 110 },
+  memberBarTrack: {
+    width: "100%",
+    height: 60,
+    borderRadius: 4,
+    overflow: "hidden",
+    justifyContent: "flex-end",
+  },
+  memberBarFill: { width: "100%", borderRadius: 4, minHeight: 2 },
+  memberBarLabel: { fontSize: 10, fontFamily: "Inter_400Regular" },
   contactRow: {
     flexDirection: "row",
     alignItems: "center",

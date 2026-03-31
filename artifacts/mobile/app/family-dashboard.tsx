@@ -359,19 +359,50 @@ export default function FamilyDashboardScreen() {
               <Text style={[typography.labelBold, { color: colors.text, marginBottom: spacing.md }]}>
                 Family Activity Timeline
               </Text>
-              {combinedTimeline.map((ev) => (
-                <View key={ev.key} style={styles.tlRow}>
-                  <View style={[styles.tlDot, { backgroundColor: getMemberColor(colors, ev.memberIdx) }]} />
-                  <Text style={[styles.tlTime, { color: colors.secondaryText }]}>
-                    {ev.start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    {" — "}
-                    {ev.end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </Text>
-                  <Text style={[styles.tlName, { color: getMemberColor(colors, ev.memberIdx) }]} numberOfLines={1}>
-                    {ev.name}
-                  </Text>
-                </View>
-              ))}
+              {(() => {
+                const nowTime = new Date();
+                let nowInserted = false;
+                const rows: React.ReactNode[] = [];
+                combinedTimeline.forEach((ev) => {
+                  if (!nowInserted && ev.start > nowTime) {
+                    nowInserted = true;
+                    rows.push(
+                      <View key="now-indicator" style={[styles.nowRow, { borderColor: colors.danger }]}>
+                        <View style={[styles.nowDot, { backgroundColor: colors.danger }]} />
+                        <Text style={[styles.nowText, { color: colors.danger }]}>
+                          Now — {nowTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </Text>
+                        <View style={[styles.nowLine, { backgroundColor: colors.danger + "44" }]} />
+                      </View>
+                    );
+                  }
+                  rows.push(
+                    <View key={ev.key} style={styles.tlRow}>
+                      <View style={[styles.tlDot, { backgroundColor: getMemberColor(colors, ev.memberIdx) }]} />
+                      <Text style={[styles.tlTime, { color: colors.secondaryText }]}>
+                        {ev.start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {" — "}
+                        {ev.end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </Text>
+                      <Text style={[styles.tlName, { color: getMemberColor(colors, ev.memberIdx) }]} numberOfLines={1}>
+                        {ev.name}
+                      </Text>
+                    </View>
+                  );
+                });
+                if (!nowInserted) {
+                  rows.push(
+                    <View key="now-indicator-end" style={[styles.nowRow, { borderColor: colors.danger }]}>
+                      <View style={[styles.nowDot, { backgroundColor: colors.danger }]} />
+                      <Text style={[styles.nowText, { color: colors.danger }]}>
+                        Now — {nowTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </Text>
+                      <View style={[styles.nowLine, { backgroundColor: colors.danger + "44" }]} />
+                    </View>
+                  );
+                }
+                return rows;
+              })()}
             </View>
           )}
 
@@ -477,6 +508,18 @@ const styles = StyleSheet.create({
   tlDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
   tlTime: { fontSize: 11, fontFamily: "Inter_400Regular", flex: 1 },
   tlName: { fontSize: 12, fontFamily: "Inter_600SemiBold", maxWidth: 90 },
+  nowRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+    borderTopWidth: 1.5,
+    paddingTop: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  nowDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  nowText: { fontSize: 11, fontFamily: "Inter_700Bold" },
+  nowLine: { flex: 1, height: 1.5, borderRadius: 1 },
   hmRow: { flexDirection: "row", gap: 2 },
   hmCell: { width: 12, height: 16, borderRadius: 2 },
   hmLabels: { position: "relative", height: 18, marginTop: 4 },
