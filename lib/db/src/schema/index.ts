@@ -197,3 +197,51 @@ export const geofenceZonesTable = pgTable("geofence_zones", {
 });
 
 export type GeofenceZone = typeof geofenceZonesTable.$inferSelect;
+
+export const trackerSessionsTable = pgTable("tracker_sessions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }).unique(),
+  status: varchar("status", { length: 20 }).default("disconnected").notNull(),
+  qrCodeBase64: text("qr_code_base64"),
+  cookiesJson: text("cookies_json"),
+  localStorageJson: text("local_storage_json"),
+  connectedAt: timestamp("connected_at"),
+  lastActiveAt: timestamp("last_active_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type TrackerSession = typeof trackerSessionsTable.$inferSelect;
+export type InsertTrackerSession = typeof trackerSessionsTable.$inferInsert;
+
+export const trackerJobsTable = pgTable("tracker_jobs", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  phoneNumber: varchar("phone_number", { length: 30 }).notNull(),
+  label: varchar("label", { length: 100 }),
+  isActive: boolean("is_active").default(true).notNull(),
+  lastStatus: varchar("last_status", { length: 20 }).default("unknown").notNull(),
+  lastStatusAt: timestamp("last_status_at"),
+  pollIntervalSeconds: integer("poll_interval_seconds").default(7).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type TrackerJob = typeof trackerJobsTable.$inferSelect;
+export type InsertTrackerJob = typeof trackerJobsTable.$inferInsert;
+
+export const activityLogsTable = pgTable("activity_logs", {
+  id: serial("id").primaryKey(),
+  jobId: integer("job_id").notNull().references(() => trackerJobsTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  phoneNumber: varchar("phone_number", { length: 30 }).notNull(),
+  event: varchar("event", { length: 20 }).notNull(),
+  statusText: text("status_text"),
+  sessionStartAt: timestamp("session_start_at"),
+  sessionEndAt: timestamp("session_end_at"),
+  durationSeconds: integer("duration_seconds"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ActivityLog = typeof activityLogsTable.$inferSelect;
+export type InsertActivityLog = typeof activityLogsTable.$inferInsert;

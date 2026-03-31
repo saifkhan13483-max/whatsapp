@@ -15,6 +15,13 @@ config.resolver = {
     path.resolve(workspaceRoot, "node_modules"),
   ],
   unstable_enableSymlinks: true,
+  blockList: [
+    /node_modules\/\.pnpm\/puppeteer.*/,
+    /node_modules\/\.pnpm\/devtools-protocol.*/,
+    /devtools-protocol_tmp_.*/,
+    /\/\.git\/.*/,
+    /artifacts\/api-server\/.*/,
+  ],
 };
 
 module.exports = config;

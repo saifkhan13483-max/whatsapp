@@ -1,5 +1,8 @@
-import app from "./app";
-import { logger } from "./lib/logger";
+import { createServer } from "http";
+import app from "./app.js";
+import { logger } from "./lib/logger.js";
+import { initWsServer } from "./services/websocket/wsServer.js";
+import { initializeFromDB } from "./services/tracker/trackingEngine.js";
 
 const rawPort = process.env["PORT"];
 
@@ -15,11 +18,19 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
+const httpServer = createServer(app);
 
+initWsServer(httpServer);
+
+httpServer.listen(port, () => {
   logger.info({ port }, "Server listening");
+
+  initializeFromDB().catch((err) => {
+    logger.error({ err }, "Failed to initialize tracking jobs from DB");
+  });
+});
+
+httpServer.on("error", (err) => {
+  logger.error({ err }, "HTTP server error");
+  process.exit(1);
 });

@@ -297,6 +297,68 @@ Generated Zod schemas.
 
 Generated React Query hooks.
 
+## Puppeteer-Based WhatsApp Web Tracker
+
+A complete online/offline status tracking system using headless Chromium + WhatsApp Web automation. Runs alongside the existing Baileys-based system.
+
+### Architecture
+
+```
+Express Server (port 8080)
+├── REST API  /api/tracker/*
+├── WebSocket  ws://host:8080/ws?userId=ID
+└── Tracking Engine (in-process worker pool)
+    ├── BrowserManager     — Chromium instances per user
+    ├── SessionManager     — QR code login, cookie persistence
+    ├── StatusDetector     — DOM polling for online/offline
+    └── TrackingEngine     — per-job AbortController workers
+```
+
+### System Chromium
+- Installed via Nix: `chromium`
+- Detected at runtime via `which chromium`
+- Args: `--no-sandbox`, `--disable-dev-shm-usage`, `--disable-gpu`
+
+### New Database Tables
+- `tracker_sessions` — browser session per user (cookies, localStorage, QR code)
+- `tracker_jobs` — tracked phone numbers per user (status, poll interval)
+- `activity_logs` — online/offline events with session duration
+
+### New API Endpoints (all require auth)
+
+**Session Management:**
+- `POST /api/tracker/session/start` — start WhatsApp Web session, returns QR or connected status
+- `GET /api/tracker/session/status` — get current session status + QR code base64
+- `DELETE /api/tracker/session` — disconnect and clear session
+
+**Tracking Jobs:**
+- `POST /api/tracker/track` — `{ phoneNumber, label?, pollIntervalSeconds? }` — start tracking
+- `DELETE /api/tracker/untrack/:jobId` — stop tracking a number
+- `GET /api/tracker/jobs` — list all tracking jobs
+
+**Analytics:**
+- `GET /api/tracker/activity/:phoneNumber` — activity log `?limit=100&since=ISO_DATE`
+- `GET /api/tracker/stats/:phoneNumber` — 7-day stats summary
+
+**WebSocket:**
+- `GET /api/tracker/ws/info` — WebSocket connection info
+- Connect: `ws://HOST:8080/ws?userId=ID`
+- Events: `{ type: "status_change", jobId, phoneNumber, status, previousStatus, statusText, durationSeconds, timestamp }`
+
+### Anti-Ban Strategy
+- Jittered polling intervals (±40% randomization)
+- Realistic User-Agent header
+- Session cookies/localStorage persisted across restarts
+- Auto-reconnect on browser crash
+
+### New Service Files
+- `src/lib/chromium.ts` — Chromium binary path detection
+- `src/services/tracker/browserManager.ts` — browser lifecycle
+- `src/services/tracker/sessionManager.ts` — QR login + session restore
+- `src/services/tracker/statusDetector.ts` — DOM-based status polling
+- `src/services/tracker/trackingEngine.ts` — job orchestration
+- `src/services/websocket/wsServer.ts` — WebSocket server
+
 ## Environment Variables
 
 - `DATABASE_URL` — PostgreSQL connection string (auto-provisioned)
