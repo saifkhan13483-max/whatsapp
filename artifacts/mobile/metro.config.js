@@ -10,11 +10,10 @@ config.projectRoot = projectRoot;
 
 config.watchFolders = [workspaceRoot];
 
-const blocklistRE = /.*_tmp_\d+.*/;
-
 config.resolver = {
   ...config.resolver,
-  blockList: blocklistRE,
+  unstable_enableSymlinks: true,
+  disableHierarchicalLookup: true,
   nodeModulesPaths: [
     path.resolve(projectRoot, "node_modules"),
     path.resolve(workspaceRoot, "node_modules"),
