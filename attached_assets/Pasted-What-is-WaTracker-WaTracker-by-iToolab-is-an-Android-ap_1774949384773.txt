@@ -1,0 +1,35 @@
+What is WaTracker?
+
+WaTracker (by iToolab) is an Android application designed to track WhatsApp activity — primarily the Last Seen status, online/offline notifications, chat monitoring, and "View Once" messages. It is available on Google Play and works by linking to a WhatsApp account via an authorized connection method.
+
+How WaTracker Connects to WhatsApp:
+
+WaTracker uses two distinct connection methods depending on what feature you want to use:
+
+1. WhatsApp Account Linking (for Last Seen & Online Tracking)
+
+This method connects your own WhatsApp account to the WaTracker app as a "bridge" to monitor other contacts. Here's how it works step by step:
+
+Step 1 – Add a Contact: You launch WaTracker, tap "Add Contact," and enter the target contact's name and phone number (the person you want to track).
+Step 2 – Configure Notifications: You toggle on/off online and offline notifications as desired, then press "Start Tracking."
+Step 3 – Connect WhatsApp: You press the "Connect WhatsApp" button inside the app, which prompts you to link your own WhatsApp account to the app.
+Step 4 – Enter WhatsApp Details: You follow on-screen instructions to authorize the connection between WaTracker and WhatsApp on your device.
+Step 5 – Activate Tracking: Once the account is successfully linked, you press "Go to Activate" → "Activate," and WaTracker begins monitoring the target contact's online/offline activity in real time.
+Essentially, WaTracker uses your own WhatsApp account as a logged-in session to passively observe when your tracked contacts come online or go offline, without the target person being notified.
+
+2. QR Code Scanning (for Chat & Message Monitoring)
+
+For the more advanced feature of reading WhatsApp chats, WaTracker uses a QR code-based method — similar to WhatsApp Web. Here's how it works:
+
+You launch WaTracker and tap "Start."
+The app generates a QR code on the screen.
+You then physically pick up the phone that is already logged into the target WhatsApp account and scan the QR code using WhatsApp's "Linked Devices" feature.
+Once scanned, WaTracker loads and syncs all WhatsApp chats and content from that account.
+⚠️ Important Note: This QR method requires physical access to the target's phone and effectively uses WhatsApp's own "Linked Devices" functionality — the same mechanism used by WhatsApp Web/Desktop. This is technically an authorized session from WhatsApp's perspective, but using it without the account owner's consent may be illegal and a violation of privacy laws in many jurisdictions.
+
+Key Technical Mechanism Summary:
+
+Feature	Connection Method
+Last Seen / Online Status Tracking	Link your own WhatsApp account via in-app authorization
+Chat / Message Monitoring	QR Code scan on the target's phone (like WhatsApp Web)
+View Once Messages	QR Code scan + account linking

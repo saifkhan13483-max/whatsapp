@@ -36,7 +36,7 @@ function UnreadBadge({ count }: { count: number }) {
 
 function NotificationTabIcon({ color, size }: { color: string; size: number }) {
   const { data: notifications } = useNotifications();
-  const unread = notifications?.filter((n: any) => !n.isRead).length ?? 0;
+  const unread = notifications?.filter((n: any) => !n.read).length ?? 0;
   return (
     <View style={{ position: "relative" }}>
       <Feather name="bell" size={size} color={color} />
