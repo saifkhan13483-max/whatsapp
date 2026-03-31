@@ -188,7 +188,9 @@ Tables created via `drizzle-kit push` (run from `lib/db`):
 
 ## Metro Bundler Configuration
 
-The `artifacts/mobile/metro.config.js` explicitly sets `projectRoot = __dirname` and `watchFolders = [workspaceRoot]` with `nodeModulesPaths` pointing to both the mobile app's and the workspace root's `node_modules`. This ensures Metro resolves modules from the correct root in the pnpm monorepo context and avoids the blank-screen "Unable to resolve ./index from workspace root" error.
+The `artifacts/mobile/metro.config.js` sets `projectRoot = __dirname` and `watchFolders = [workspaceRoot]` with `nodeModulesPaths` pointing to both the mobile app's and the workspace root's `node_modules`, plus `unstable_enableSymlinks: true`.
+
+**Critical**: Do NOT set `disableHierarchicalLookup: true` in the resolver config. pnpm stores transitive dependencies (like `expo-modules-core`) inside each package's own `node_modules` in the virtual store. With hierarchical lookup disabled, Metro cannot walk up the symlink chain to find those packages, causing "Unable to resolve" errors and a blank screen.
 
 ## TypeScript & Composite Projects
 

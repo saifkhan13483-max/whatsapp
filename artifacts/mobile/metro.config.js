@@ -6,18 +6,15 @@ const workspaceRoot = path.resolve(projectRoot, "../..");
 
 const config = getDefaultConfig(projectRoot);
 
-config.projectRoot = projectRoot;
-
 config.watchFolders = [workspaceRoot];
 
 config.resolver = {
   ...config.resolver,
-  unstable_enableSymlinks: true,
-  disableHierarchicalLookup: true,
   nodeModulesPaths: [
     path.resolve(projectRoot, "node_modules"),
     path.resolve(workspaceRoot, "node_modules"),
   ],
+  unstable_enableSymlinks: true,
 };
 
 module.exports = config;
