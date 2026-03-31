@@ -150,11 +150,13 @@ export async function requestPairingCode(
     auth: state as AuthenticationState,
     printQRInTerminal: false,
     logger: logger.child({ component: "baileys", userId }) as any,
-    browser: ["WaTracker Pro", "Chrome", "120.0.0"],
+    // Use a standard browser fingerprint — custom names cause WhatsApp to reject pairing
+    browser: ["Windows", "Chrome", "114.0.5735.198"],
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
-    // Safety net: even if pair-device arrives unexpectedly, keep socket alive
-    // long enough for the user to enter the code (10 min per QR ref).
+    // Prevents premature timeout before pairing code arrives
+    defaultQueryTimeoutMs: undefined,
+    // Safety net: keep socket alive long enough for user to enter the code
     qrTimeout: 10 * 60 * 1000,
   });
 
@@ -436,9 +438,10 @@ export async function reconnect(
       auth: state as AuthenticationState,
       printQRInTerminal: false,
       logger: logger.child({ component: "baileys", userId }) as any,
-      browser: ["WaTracker Pro", "Chrome", "120.0.0"],
+      browser: ["Windows", "Chrome", "114.0.5735.198"],
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
+      defaultQueryTimeoutMs: undefined,
     });
 
     const entry: SocketEntry = { socket: sock, connectionAccepted: false, sessionDir };
