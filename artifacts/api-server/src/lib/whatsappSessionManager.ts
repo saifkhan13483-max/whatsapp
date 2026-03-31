@@ -130,10 +130,17 @@ export async function requestPairingCode(userId: number, phoneNumber: string): P
 
   const cleanPhone = phoneNumber.replace(/\D/g, "");
 
+  // Track whether the pairing code has already been resolved so that a
+  // subsequent connection-close event (which is normal after the user scans)
+  // doesn't spuriously reject the in-flight promise.
+  let codeObtained = false;
   let connectionCloseReject: ((e: Error) => void) | null = null;
 
   const connectionFailedPromise = new Promise<never>((_, reject) => {
-    connectionCloseReject = reject;
+    connectionCloseReject = (err: Error) => {
+      // Only reject if we haven't obtained the code yet.
+      if (!codeObtained) reject(err);
+    };
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -165,12 +172,11 @@ export async function requestPairingCode(userId: number, phoneNumber: string): P
     }
 
     if (connection === "close") {
-      const baomStatusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-      const loggedOut = baomStatusCode === DisconnectReason.loggedOut;
+      const boomStatusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const loggedOut = boomStatusCode === DisconnectReason.loggedOut;
 
       if (connectionCloseReject) {
-        const err = new Error("Could not connect to WhatsApp. Please try again.");
-        connectionCloseReject(err);
+        connectionCloseReject(new Error("Could not connect to WhatsApp. Please try again."));
         connectionCloseReject = null;
       }
 
@@ -186,24 +192,29 @@ export async function requestPairingCode(userId: number, phoneNumber: string): P
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     setTimeout(() => {
-      const err = new Error("Could not reach WhatsApp. Please check your internet connection and try again.");
-      reject(err);
-      if (connectionCloseReject) {
-        connectionCloseReject(err);
-        connectionCloseReject = null;
+      if (!codeObtained) {
+        const err = new Error("Could not reach WhatsApp. Please check your internet connection and try again.");
+        if (connectionCloseReject) {
+          connectionCloseReject(err);
+          connectionCloseReject = null;
+        }
+        reject(err);
       }
-    }, 12_000);
+    }, 30_000);
   });
 
   try {
-    await new Promise<void>((r) => setTimeout(r, 1200));
-
+    // Call requestPairingCode immediately — Baileys queues the request
+    // internally until the WebSocket handshake completes.  The previous
+    // 1200 ms arbitrary delay meant the connection was often already closed
+    // before the request was ever sent, causing the race to fail instantly.
     const code = await Promise.race([
       sock.requestPairingCode(cleanPhone),
       connectionFailedPromise,
       timeoutPromise,
     ]);
 
+    codeObtained = true;
     connectionCloseReject = null;
 
     entry.pairingCode = code;
