@@ -152,6 +152,24 @@ router.post("/", async (req: AuthRequest, res) => {
   }
 });
 
+router.get("/:id", async (req: AuthRequest, res) => {
+  try {
+    const id = Number(req.params["id"]);
+    const [contact] = await db
+      .select()
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, id), eq(contactsTable.userId, req.userId!)))
+      .limit(1);
+    if (!contact) {
+      res.status(404).json({ error: "Contact not found" });
+      return;
+    }
+    res.json(contact);
+  } catch {
+    res.status(500).json({ error: "Failed to fetch contact" });
+  }
+});
+
 router.put("/:id", async (req: AuthRequest, res) => {
   try {
     const id = Number(req.params["id"]);
@@ -222,10 +240,6 @@ router.get("/:id/sessions", async (req: AuthRequest, res) => {
   try {
     const contactId = Number(req.params["id"]);
     const { from, to } = req.query;
-    let query = db
-      .select()
-      .from(activitySessionsTable)
-      .where(eq(activitySessionsTable.contactId, contactId));
     const conditions = [eq(activitySessionsTable.contactId, contactId)];
     if (from) conditions.push(gte(activitySessionsTable.startTime, new Date(from as string)));
     if (to) conditions.push(lte(activitySessionsTable.startTime, new Date(to as string)));
