@@ -16,7 +16,7 @@ function getBaseUrl(): string {
   }
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
   if (domain) {
-    return `https://${domain}:8080`;
+    return `https://${domain}`;
   }
   return "";
 }
