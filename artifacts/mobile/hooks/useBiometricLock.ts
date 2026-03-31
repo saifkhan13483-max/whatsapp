@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { getItem, setItem, StorageKeys } from "@/lib/storage";
 
+const STORAGE_KEY_AUTO_LOCK = "auto_lock_seconds";
+
 let localAuth: typeof import("expo-local-authentication") | null = null;
 try {
   localAuth = require("expo-local-authentication");
@@ -11,16 +13,19 @@ export function useBiometricLock() {
   const [supported, setSupported] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [autoLockSeconds, setAutoLockSecondsState] = useState<number>(30);
 
   useEffect(() => {
     async function init() {
       try {
-        const [storedEnabled, isAvailable] = await Promise.all([
+        const [storedEnabled, isAvailable, storedAutoLock] = await Promise.all([
           getItem<boolean>(StorageKeys.BIOMETRIC_LOCK),
           localAuth?.hasHardwareAsync().catch(() => false) ?? Promise.resolve(false),
+          getItem<number>(STORAGE_KEY_AUTO_LOCK),
         ]);
         setSupported(!!isAvailable);
         setEnabled(storedEnabled ?? false);
+        setAutoLockSecondsState(storedAutoLock ?? 30);
         if (!storedEnabled) setIsAuthenticated(true);
       } catch {
         setIsAuthenticated(true);
@@ -57,5 +62,19 @@ export function useBiometricLock() {
     if (!value) setIsAuthenticated(true);
   }, []);
 
-  return { enabled, supported, isAuthenticated, isLoading, authenticate, toggle };
+  const setAutoLockSeconds = useCallback(async (seconds: number) => {
+    setAutoLockSecondsState(seconds);
+    await setItem(STORAGE_KEY_AUTO_LOCK, seconds);
+  }, []);
+
+  return {
+    enabled,
+    supported,
+    isAuthenticated,
+    isLoading,
+    authenticate,
+    toggle,
+    autoLockSeconds,
+    setAutoLockSeconds,
+  };
 }

@@ -40,21 +40,25 @@ artifacts-monorepo/
 
 Full-featured WhatsApp activity monitoring & parental control app.
 
-### Features
+### Features (v2.0 — Fully Implemented)
 - **Dashboard**: Live stats, online contacts, quick actions
-- **Chat Tracker**: Browse tracked conversations
-- **View Once Recovery**: Recover disappeared media
-- **Notifications/Alerts**: Filterable push notifications with badge counts
-- **Settings**: Theme, notification preferences, account management
+- **Chat Tracker**: Privacy mode toggle, filter bottom sheet (All/Unread/Media/View-Once), swipe-left Archive, swipe-right Mute, skeleton loaders, pull-to-refresh
+- **Chat Conversation**: WhatsApp-style bubbles, date separators, inline search with toggle, keyword highlights (from alert list), deleted/view-once message states
+- **View Once Recovery**: 3-column media grid, filter chips (Photos/Videos/Voice), select mode with multi-select, full-screen viewer with prev/next, share
+- **Notifications/Alerts**: SectionList grouped Today/Yesterday/This Week/Older, swipe-right to Mark-Read, confirm-clear dialog
+- **Settings**: 8 complete sections — Security (biometric + auto-lock timer), Subscription, Notifications, DND (add/delete windows), Alerts (daily usage slider + spike), Theme, Data (export/import/delete account 3-step), More (links + dev easter egg at v7 taps)
 - **Contact Detail**: Per-contact stats, hourly activity charts, session data
 - **Family Dashboard**: Aggregated family monitoring overview
-- **Reports**: Full activity reports with charts, range filters
-- **Subscription**: Plan management UI
+- **Reports**: Avatar contact picker, date range picker, 4 stat cards, daily bar chart, hourly heatmap with legend, sortable sessions table (click header to sort), export CSV + share
+- **Subscription**: Monthly/Annual billing toggle with "Save 40%" badge, 3 plan cards with feature lists and per-plan pricing, feature comparison table, money-back guarantee badge
 - **Keyword Alerts**: Add/manage keywords for content monitoring
 - **Contact Groups**: Organize contacts into groups
-- **Geofence Zones**: Location-based monitoring zones
 - **Activity Timeline**: Full day timeline for all contacts
 - **Contact Comparison**: Side-by-side contact activity comparison
+
+### Hook Updates (v2.0)
+- `useBiometricLock`: Added `autoLockSeconds`, `setAutoLockSeconds` properties
+- `useReports`: Added `sessions`, `hourlyHeatmap` fields to `Report` type
 
 ### Tech
 - Expo Router (file-based routing)

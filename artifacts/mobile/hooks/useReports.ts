@@ -1,6 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch, getApiUrl } from "@/lib/api";
 
+export interface SessionRow {
+  id: number;
+  date: string;
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
+}
+
 export interface Report {
   contactId: number;
   contactName: string;
@@ -9,6 +17,8 @@ export interface Report {
   totalMinutes: number;
   peakHour: number;
   dailyBreakdown: Array<{ date: string; minutes: number; sessions: number }>;
+  hourlyHeatmap: number[];
+  sessions: SessionRow[];
 }
 
 export function useReport(contactId: number, range: string) {
