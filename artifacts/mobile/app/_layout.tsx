@@ -28,32 +28,34 @@ SplashScreen.preventAutoHideAsync();
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading: authLoading } = useAuth();
   const { enabled: biometricEnabled, isAuthenticated: biometricPassed } = useBiometricLock();
-  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
+  const [ready, setReady] = useState(false);
   const router = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
-    getItem<boolean>(StorageKeys.ONBOARDING_DONE).then((val) => {
-      setOnboardingDone(!!val);
-    });
-  }, []);
+    async function route() {
+      if (authLoading) return;
 
-  useEffect(() => {
-    if (authLoading || onboardingDone === null) return;
+      // Always read fresh from storage so writes by the onboarding screen
+      // are immediately visible here without stale state.
+      const done = !!(await getItem<boolean>(StorageKeys.ONBOARDING_DONE));
+      setReady(true);
 
-    const inAuthScreen = segments[0] === "auth";
-    const inOnboardingScreen = segments[0] === "onboarding";
+      const inAuthScreen = segments[0] === "auth";
+      const inOnboardingScreen = segments[0] === "onboarding";
 
-    if (!user && !inAuthScreen) {
-      router.replace("/auth" as any);
-    } else if (user && !onboardingDone && !inOnboardingScreen) {
-      router.replace("/onboarding" as any);
-    } else if (user && onboardingDone && (inAuthScreen || inOnboardingScreen)) {
-      router.replace("/(tabs)" as any);
+      if (!user && !inAuthScreen) {
+        router.replace("/auth" as any);
+      } else if (user && !done && !inOnboardingScreen) {
+        router.replace("/onboarding" as any);
+      } else if (user && done && (inAuthScreen || inOnboardingScreen)) {
+        router.replace("/(tabs)" as any);
+      }
     }
-  }, [user, authLoading, onboardingDone, segments]);
+    route();
+  }, [user, authLoading, segments]);
 
-  if (user && onboardingDone && biometricEnabled && !biometricPassed) {
+  if (user && ready && biometricEnabled && !biometricPassed) {
     return (
       <View style={{ flex: 1 }}>
         {children}
