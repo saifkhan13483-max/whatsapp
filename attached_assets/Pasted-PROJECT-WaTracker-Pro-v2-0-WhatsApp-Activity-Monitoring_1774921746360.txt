@@ -1,0 +1,999 @@
+PROJECT: WaTracker Pro v2.0 — WhatsApp Activity Monitoring & Parental Control Mobile App
+
+IMPORTANT — READ BEFORE YOU START:
+This is a LARGE project. Build it INCREMENTALLY using the phased plan below. Complete Phase 1 fully, test it, then move to Phase 2, and so on. Create a checkpoint after each phase. Do NOT attempt to build everything in a single pass. At each phase, ask yourself: "Am I adding any functionality that wasn't explicitly requested in this phase?" — if yes, stop and stay on track.
+
+Before writing ANY code for each phase:
+1. Describe your understanding of the requirements for that phase.
+2. List which files you will create or modify.
+3. Identify any risks to existing functionality.
+4. Propose a step-by-step implementation plan.
+5. Do NOT proceed until the plan is confirmed.
+
+═══════════════════════════════════════════════════════════════════
+SECTION 1: TECH STACK & ENVIRONMENT
+═══════════════════════════════════════════════════════════════════
+
+Frontend:
+- Expo SDK 54 + React Native + TypeScript
+- Expo Router (file-based routing) for all navigation
+- React Native 0.81, React 19.1
+
+Backend:
+- Express 5 + TypeScript + Drizzle ORM + PostgreSQL
+- Already running on port 3001 — do NOT rebuild, modify, or restart the backend
+- Connect to all API endpoints with credentials: 'include' on every fetch/axios call
+- Use getApiUrl() from @/lib/query-client for all API base URLs — never hardcode hostnames or localhost
+
+State Management:
+- React Query (@tanstack/react-query) for all server state (fetching, caching, mutations, optimistic updates)
+- React Context for auth state (AuthProvider) and theme state (ThemeProvider)
+- AsyncStorage for persisting: theme preference, onboarding completion flag, DND settings, biometric lock preference, favorite contacts list
+
+Navigation:
+- NativeTabs from expo-router with isLiquidGlassAvailable() check — use liquid glass tab bar on iOS 26+, fallback to classic Tabs with BlurView on older iOS and Android
+- 5 bottom tabs + stack screens pushed on top
+
+Styling:
+- React Native StyleSheet ONLY — no styled-components, no NativeWind, no Tailwind
+- ALL color values come from constants/colors.ts via useColors() hook
+- Never write hardcoded hex values inside component files
+- Font: Inter (use Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold via expo-font — Inter is pre-installed)
+
+Key Libraries (install these):
+- react-native-reanimated (v4) — for all animations
+- @tanstack/react-query — server state
+- @react-native-async-storage/async-storage — persistence
+- expo-haptics — haptic feedback
+- expo-sharing — file sharing/export
+- expo-local-authentication — biometric lock
+- expo-notifications — push notifications
+- expo-secure-store — store sensitive tokens
+- @expo/vector-icons (Ionicons, Feather, MaterialCommunityIcons) — icons only, NO emojis anywhere
+- react-native-gesture-handler — swipe actions
+- react-native-safe-area-context — safe areas
+- expo-blur — BlurView for tab bar fallback
+- expo-linear-gradient — gradient backgrounds
+- date-fns — relative time formatting
+- react-native-toast-message — toast notifications
+
+Do NOT install: any charting library (build all charts with pure React Native Views), any CSS-in-JS library, any emoji package
+
+═══════════════════════════════════════════════════════════════════
+SECTION 2: BACKEND API REFERENCE (EXISTING — DO NOT MODIFY)
+═══════════════════════════════════════════════════════════════════
+
+Auth:
+POST /api/auth/register — body: { username, email, password } → returns user object
+POST /api/auth/login — body: { email, password } → sets httpOnly JWT cookie
+POST /api/auth/logout — clears cookie
+GET  /api/auth/me — returns current user or 401
+
+Contacts:
+GET    /api/contacts — returns all tracked contacts
+POST   /api/contacts — body: { name, phoneNumber }
+PUT    /api/contacts/:id — body: { name, notes, alertEnabled }
+DELETE /api/contacts/:id
+
+Sessions & Stats:
+GET  /api/contacts/:id/sessions?from=&to= — activity sessions with time ranges
+GET  /api/contacts/:id/stats?range=today|week|month — aggregated stats
+GET  /api/contacts/:id/hourly — 24-hour activity breakdown
+POST /api/contacts/:id/status — body: { status: 'online'|'offline' }
+
+Chat & Media:
+GET /api/conversations — all tracked conversations
+GET /api/messages/:contactId?page=&limit= — paginated messages
+GET /api/view-once — recovered view-once media items
+
+Notifications:
+GET    /api/notifications?filter=&page= — paginated, filterable
+POST   /api/notifications/mark-read/:id
+POST   /api/notifications/mark-all-read
+DELETE /api/notifications/clear
+
+Reports:
+GET /api/reports/:contactId?range= — full activity report
+GET /api/reports/:contactId/export?format=csv — export as CSV file
+
+Subscription & Settings:
+GET  /api/subscription/plans — available plans
+GET  /api/subscription/current — user's current plan
+POST /api/subscription/upgrade — body: { planId }
+GET  /api/settings — user settings
+PUT  /api/settings — update settings
+POST /api/settings/dnd — body: { startTime, endTime, label }
+DELETE /api/settings/dnd/:id
+
+NEW API ENDPOINTS (add these to the existing backend pattern — frontend should call them even if backend returns 404 for now, with graceful fallback):
+GET    /api/contacts/favorites — returns favorite contacts
+POST   /api/contacts/:id/favorite — toggle favorite
+GET    /api/contacts/:id/patterns — AI-predicted activity patterns
+GET    /api/contacts/groups — contact groups
+POST   /api/contacts/groups — body: { name, contactIds }
+PUT    /api/contacts/groups/:id — update group
+DELETE /api/contacts/groups/:id
+GET    /api/activity/family-summary — aggregated family dashboard data
+GET    /api/activity/comparisons?contactIds=1,2,3 — compare multiple contacts
+POST   /api/alerts/keyword — body: { keyword, severity }
+GET    /api/alerts/keywords — list keyword alerts
+DELETE /api/alerts/keyword/:id
+GET    /api/geofence/zones — geofence zones
+POST   /api/geofence/zones — body: { name, lat, lng, radius }
+GET    /api/activity/timeline?date= — full day timeline for all contacts
+
+═══════════════════════════════════════════════════════════════════
+SECTION 3: DESIGN SYSTEM — WhatsApp-Inspired, Dark-First
+═══════════════════════════════════════════════════════════════════
+
+Color Palette (define ALL in constants/colors.ts):
+Primary green:     #25D366     Dark green:      #128C7E     Darkest green:   #075E54
+Blue accent:       #34B7F1     Purple accent:   #7C4DFF     (for view-once items)
+Light background:  #f0f2f5     Dark background: #0b141a
+Light surface:     #ffffff     Dark surface:    #111b21
+Light text:        #111B21     Dark text:       #e9edef
+Secondary text:    #667781 (light) / #8696a0 (dark)
+Border:            #e9edef (light) / #2a3942 (dark)
+Online:            #25D366     Offline:         #8696A0
+Warning:           #FFC107     Danger:          #FF3B30
+Success:           #4CAF50     Info:            #2196F3
+Muted:             #B0BEC5
+Card light:        #ffffff     Card dark:       #1f2c34
+Input light bg:    #f0f2f5     Input dark bg:   #2a3942
+
+Typography Scale:
+- H1: Inter_700Bold, 28px
+- H2: Inter_700Bold, 22px
+- H3: Inter_600SemiBold, 18px
+- Body: Inter_400Regular, 16px
+- Body Medium: Inter_500Medium, 16px
+- Caption: Inter_400Regular, 13px
+- Small: Inter_400Regular, 11px
+
+Spacing Scale: 4, 8, 12, 16, 20, 24, 32, 40, 48
+
+Border Radius: 12 standard cards, 8 inputs/buttons, 24 chips/pills, 40 avatars, 999 for fully rounded
+
+Shadows (light mode only — no shadows in dark mode):
+shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3
+
+Animated Pulsing Dot: react-native-reanimated scale animation 1 → 1.4 → 1, duration 1200ms, repeat infinite, easing: Easing.inOut(Easing.ease) — used on every online status indicator
+
+Skeleton Shimmer: animated gradient shimmer on every loading state — create a reusable <SkeletonLoader /> component with configurable width, height, borderRadius
+
+App Icon: Dark green (#075E54) background, white phone icon with three wifi-style arcs above it, inside a rounded square
+
+═══════════════════════════════════════════════════════════════════
+SECTION 4: FILE STRUCTURE
+═══════════════════════════════════════════════════════════════════
+
+app/
+  _layout.tsx                    → Root layout: providers stack
+  auth.tsx                       → Login/Register screen
+  onboarding.tsx                 → Onboarding carousel
+  (tabs)/
+    _layout.tsx                  → Tab navigator (5 tabs)
+    index.tsx                    → Dashboard
+    chat.tsx                     → Chat Tracker
+    viewonce.tsx                 → View Once Recovery
+    notifications.tsx            → Notifications
+    settings.tsx                 → Settings
+  contact/[id].tsx               → Contact Detail
+  chat/[id].tsx                  → Chat Conversation View
+  reports.tsx                    → Full Reports
+  subscription.tsx               → Plans & Upgrade
+  family-dashboard.tsx           → Family Overview (NEW)
+  compare.tsx                    → Contact Comparison (NEW)
+  keyword-alerts.tsx             → Keyword Alert Management (NEW)
+  activity-timeline.tsx          → Full Day Timeline (NEW)
+  contact-groups.tsx             → Contact Groups Management (NEW)
+
+components/
+  ui/
+    SkeletonLoader.tsx
+    PulsingDot.tsx
+    AnimatedRing.tsx
+    SparklineChart.tsx
+    BarChart.tsx
+    HeatmapGrid.tsx
+    ChipFilter.tsx
+    EmptyState.tsx
+    ErrorState.tsx
+    ConfirmDialog.tsx
+    ToastMessage.tsx
+    AvatarCircle.tsx
+    StatCard.tsx
+    BadgeCount.tsx
+    ProgressRing.tsx
+    TimelineRow.tsx
+    BubbleMessage.tsx
+    SwipeableRow.tsx
+    BiometricGate.tsx
+    SearchBar.tsx
+    SectionHeader.tsx
+    GradientHeader.tsx
+    FloatingActionButton.tsx
+    SegmentedControl.tsx
+    TimePickerSheet.tsx
+    BottomSheet.tsx
+    SliderInput.tsx
+    ToggleSwitch.tsx
+    DurationChip.tsx
+    ContactCard.tsx
+    ConversationRow.tsx
+    NotificationRow.tsx
+    PlanCard.tsx
+    ComparisonChart.tsx           (NEW)
+    ActivityRing.tsx              (NEW)
+    KeywordBadge.tsx              (NEW)
+    FamilyMemberCard.tsx          (NEW)
+    MiniHeatmap.tsx               (NEW)
+
+constants/
+  colors.ts                      → All color definitions + useColors() hook
+  typography.ts                  → Font styles
+  spacing.ts                     → Spacing constants
+  api.ts                         → API route constants
+
+hooks/
+  useAuth.ts
+  useTheme.ts
+  useContacts.ts
+  useNotifications.ts
+  useSessions.ts
+  useReports.ts
+  useSubscription.ts
+  useSettings.ts
+  useRelativeTime.ts
+  useBiometricLock.ts            (NEW)
+  useFavorites.ts                (NEW)
+  useKeywordAlerts.ts            (NEW)
+  useCompare.ts                  (NEW)
+  useFamilyDashboard.ts          (NEW)
+
+lib/
+  query-client.ts                → QueryClient config + getApiUrl()
+  api.ts                         → fetch wrapper with credentials
+  storage.ts                     → AsyncStorage helpers
+  formatters.ts                  → Time, date, duration formatters
+  validators.ts                  → Form validation functions
+
+providers/
+  AuthProvider.tsx
+  ThemeProvider.tsx
+  NotificationProvider.tsx        (NEW — handles push notification registration)
+
+═══════════════════════════════════════════════════════════════════
+SECTION 5: NAVIGATION STRUCTURE
+═══════════════════════════════════════════════════════════════════
+
+Root Layout (app/_layout.tsx):
+Wrap everything in this order:
+GestureHandlerRootView → SafeAreaProvider → ErrorBoundary (custom, with reloadAppAsync from expo) → QueryClientProvider → AuthProvider → ThemeProvider → NotificationProvider → Slot
+
+Auth Gate Logic:
+- If user is NOT authenticated → render app/auth.tsx
+- If user IS authenticated but onboarding NOT completed (check AsyncStorage) → render app/onboarding.tsx
+- If biometric lock is enabled (check AsyncStorage) AND app was backgrounded > 30 seconds → show BiometricGate overlay before showing content
+- Otherwise → render app/(tabs)
+
+Tab Navigator (app/(tabs)/_layout.tsx):
+Use NativeTabs with isLiquidGlassAvailable() for iOS 26+ liquid glass. Fallback: classic Tabs with BlurView tabBar.
+
+5 Tabs:
+1. Dashboard — icon: house (Feather) — label: "Home"
+2. Chat — icon: message-circle (Feather) — label: "Chats"
+3. View Once — icon: eye (Feather) — label: "Media"
+4. Notifications — icon: bell (Feather) — label: "Alerts" — show red badge with unread count
+5. Settings — icon: sliders (Feather) — label: "Settings"
+
+Stack Screens (pushed on top of tabs):
+app/contact/[id].tsx — Contact Detail
+app/chat/[id].tsx — Chat Conversation View
+app/reports.tsx — Full Reports Screen
+app/subscription.tsx — Plans & Upgrade
+app/family-dashboard.tsx — Family Dashboard (NEW)
+app/compare.tsx — Contact Comparison (NEW)
+app/keyword-alerts.tsx — Keyword Alert Config (NEW)
+app/activity-timeline.tsx — Full Day Timeline (NEW)
+app/contact-groups.tsx — Contact Groups (NEW)
+
+═══════════════════════════════════════════════════════════════════
+SECTION 6: SCREENS — DETAILED SPECIFICATIONS
+═══════════════════════════════════════════════════════════════════
+
+────────────────────────────────
+SCREEN 6.1: Onboarding (app/onboarding.tsx)
+────────────────────────────────
+Full-screen horizontal FlatList carousel with pagingEnabled, 5 slides:
+
+Slide 1: Shield icon (Ionicons) → "Track Any Contact" → "Monitor WhatsApp activity in real-time with zero setup"
+Slide 2: Bell icon → "Smart Alerts" → "Get instant notifications for late-night activity, long sessions, and keywords"
+Slide 3: Bar chart icon → "Detailed Reports" → "Visual charts, heatmaps, and exportable CSV reports"
+Slide 4: Users icon → "Family Dashboard" → "Monitor your entire family from one unified view"
+Slide 5: Lock icon → "Privacy First" → "Biometric lock, encrypted data, and full control over your information"
+
+Each slide: large icon (80px, primary green), bold title (H1), subtitle (Body, secondary text), centered vertically
+Progress dots at bottom: active dot = primary green (wider, 24px), inactive = muted (8px circle)
+"Next" button (full-width, green, bottom) — last slide changes to "Get Started"
+"Skip" text button top-right on all slides
+On complete: set AsyncStorage 'onboarding_done' = 'true', navigate to tabs
+Never show again after completion
+
+────────────────────────────────
+SCREEN 6.2: Auth (app/auth.tsx)
+────────────────────────────────
+Full-screen layout:
+- Top 35%: dark green (#075E54) to primary green (#25D366) LinearGradient, centered app logo (white phone + wifi arcs icon, 64px) + app name "WaTracker Pro" (H1, white) + tagline "Smart WhatsApp Monitoring" (Body, white opacity 0.8)
+- Bottom 65%: surface-colored card with borderTopLeftRadius: 24, borderTopRightRadius: 24
+
+Card contains:
+- SegmentedControl at top: "Login" / "Register" — primary green active, smooth animated indicator slide
+- Login tab: email input, password input with eye toggle for show/hide
+- Register tab: username input, email input, password input, confirm password input
+- All inputs: border radius 8, left icon (Feather), focus state = green border, error state = red border + error message below
+- Inline validation: email format check, password minimum 8 chars with 1 number + 1 letter, confirm password match, username min 3 chars
+- Submit button: full-width, green, border radius 8, shows ActivityIndicator (white) while loading, disabled state with 0.5 opacity
+- Error: react-native-toast-message red toast at top on API failure
+- Success: auto-navigate to onboarding (if first time) or dashboard
+
+────────────────────────────────
+SCREEN 6.3: Dashboard (app/(tabs)/index.tsx)
+────────────────────────────────
+Header:
+- Left: app logo icon (small, 28px) + "WaTracker" text (H3, primary green)
+- Right: search icon (tap to expand search bar), notification bell with red badge showing unread count, family dashboard icon (users icon — NEW — navigates to family-dashboard.tsx)
+
+Stats Strip (horizontal ScrollView, snap to interval):
+4 stat cards in a row, each card: icon top, value (H2, bold), label (Caption):
+- Total Contacts (users icon, blue)
+- Online Now (green pulse dot + count, green) — number has animated count-up
+- Alerts Today (bell icon, warning yellow)
+- Total Hours Today (clock icon, primary green)
+
+Quick Actions Row (NEW):
+Horizontal scroll of pill-shaped buttons:
+"Add Contact" (+ icon), "Family View" (users icon), "Compare" (bar-chart icon), "Keyword Alerts" (alert-triangle icon), "Timeline" (calendar icon)
+
+Filter Chips Row:
+Horizontally scrolling chips: All / Online / Offline / Favorites (NEW) / Recent / High Activity (NEW) / Never Seen
+Active chip = green background white text, inactive = surface background secondary text
+
+Search Bar:
+Expandable — tapping search icon in header shows search bar with smooth height animation. Collapses when empty and blurred. Filters contacts by name or phone number in real-time.
+
+Contact List (FlatList):
+- 2 columns on tablets (width > 768), 1 column on phones
+- Each ContactCard:
+  - Avatar circle (48px): colored background based on first letter hash, white initials (2 letters)
+  - Favorite star overlay top-right of avatar if favorited (NEW)
+  - Animated pulsing green dot bottom-right of avatar if online
+  - Name (Body Medium, single line, ellipsis)
+  - Last seen: relative time ("3 min ago", "Yesterday 22:15") — auto-updates every 60s via useRelativeTime hook
+  - Today's usage: e.g. "4h 23m" in secondary text
+  - Mini sparkline: 7 tiny vertical bars representing last 7 days activity (pure View components, no library, height proportional to usage, green fill)
+  - Subtle right arrow icon
+
+- Long-press card: action sheet with options:
+  → "View Detail" (navigate to contact/[id])
+  → "Toggle Favorite" (NEW)
+  → "Mute Alerts" (toggle)
+  → "Add to Group" (NEW — shows group picker)
+  → "Remove" (shows confirm dialog with red Delete button)
+
+FAB (Floating Action Button):
+- Bottom-right, 56px circle, green, shadow, "plus" icon
+- Tap: slide-up bottom sheet modal with: name TextInput, phone number TextInput (with phone formatting), "Add Contact" green button
+- Haptic feedback (expo-haptics impact medium) on successful add
+- Auto-close sheet and refresh list on success
+
+Pull-to-refresh: RefreshControl with green tint
+Loading state: 6 skeleton cards (shimmer rectangles matching card layout)
+Empty state: large users icon (muted), "No contacts yet" (H3), "Add Your First Contact" green button, centered
+
+────────────────────────────────
+SCREEN 6.4: Contact Detail (app/contact/[id].tsx)
+────────────────────────────────
+Header:
+- Back button (chevron-left), contact name centered, trash icon right (delete with confirm dialog), share icon (export contact report)
+
+Profile Section:
+- Large avatar (80px) with AnimatedRing: green glowing ring animation if online (reanimated border color pulse), grey static ring if offline
+- Name (H2), phone number (Body, secondary text)
+- "Tracking since March 12" (Caption, muted)
+- If online NOW: live timer "Online for 1:23:45" in green, updating every second (useEffect with setInterval), with pulsing dot
+- Favorite toggle button (star icon, toggles gold/muted)
+- "View in Timeline" button (NEW — navigates to activity-timeline with this contact pre-selected)
+
+Stats Strip (4 equal-width cards in a row):
+- Total Time (clock icon) — e.g. "47h 12m"
+- Sessions (refresh-cw icon) — e.g. "156"
+- Avg Session (trending-up icon) — e.g. "18m"
+- Longest Session (award icon) — e.g. "3h 45m"
+Each card: icon + value (H3 bold) + label (Caption)
+
+Activity Timeline (SectionList):
+- Grouped by date: "Today", "Yesterday", "March 28", etc.
+- Each session row: clock icon, "14:32 → 15:10" time range, DurationChip on right:
+  - Grey chip: < 30 minutes
+  - Warning/yellow chip: 30m – 2h
+  - Danger/red chip: > 2h
+- Tapping a session row expands it to show: "Duration: 38 minutes", mini bar showing where in the day this session falls
+
+Weekly Bar Chart (pure React Native Views — NO charting library):
+- 7 bars for Mon–Sun
+- Each bar is split into 3 colored segments: Day (06:00–18:00, light green), Evening (18:00–00:00, primary green), Night (00:00–06:00, dark green/red tint)
+- X-axis: day labels (M T W T F S S)
+- Y-axis: hour labels (0h, 4h, 8h, 12h)
+- Tapping a bar shows tooltip with exact hours breakdown
+
+Peak Hours Heatmap:
+- 24 columns (hours) × 7 rows (days of week)
+- Each cell: small View, background opacity proportional to activity intensity (0 = transparent, max = primary green full opacity)
+- Hour labels on top (0, 6, 12, 18, 23), day labels on left (Mon–Sun)
+- Tapping a cell shows tooltip: "Tuesday 22:00 — 45 min active"
+
+Predicted Activity Pattern (NEW):
+- Section titled "Predicted Next Online"
+- Shows predicted time ranges based on historical patterns from /api/contacts/:id/patterns
+- "Likely online: Today 20:00 – 22:30" with confidence percentage
+- Small text: "Based on last 30 days of activity"
+
+Notes Section:
+- Multiline TextInput with placeholder "Add notes about this contact..."
+- Auto-saves on blur (PUT /api/contacts/:id with notes field)
+- Checkmark animation (scale 0 → 1 with slight bounce) confirming save
+
+────────────────────────────────
+SCREEN 6.5: Chat Tracker (app/(tabs)/chat.tsx)
+────────────────────────────────
+Header:
+- "Chat Tracker" title (H2)
+- Privacy Mode toggle: eye icon, toggles message preview blur across all conversations
+- Filter icon: tap opens bottom sheet with filters (All, Unread, Has Media, Has View-Once)
+
+Search bar: below header, searches conversations by contact name or message content
+
+Conversation List (FlatList):
+Each ConversationRow:
+- Avatar (40px) with online dot
+- Name (Body Medium), last message preview (Caption, single line, blurred Text when Privacy Mode on)
+- Right side: timestamp (Caption, secondary), unread count badge (red circle, white number) if unread > 0
+- Swipe left: "Mute" button (yellow), "Archive" button (grey) (NEW)
+Tap row → push app/chat/[id].tsx
+
+Empty state: lock icon (64px, muted) + "No conversations tracked" + subtitle "Conversations will appear here when tracked"
+
+────────────────────────────────
+SCREEN 6.6: Chat View (app/chat/[id].tsx)
+────────────────────────────────
+Header:
+- Back button, avatar (32px) + contact name + online status text ("online" green / "last seen 3h ago" grey), search icon
+
+Search: tapping search icon shows inline search bar at top, highlights matching text in messages with yellow background
+
+Message List (inverted FlatList — newest at bottom):
+- Date separator between days: centered text "Today", "Yesterday", "March 28" in grey pill
+- WhatsApp-style bubbles:
+  - Contact messages: left-aligned, grey/dark-surface bubble, left tail
+  - Outgoing messages: right-aligned, green bubble (#DCF8C6 light / #005c4b dark), right tail
+  - Each bubble: message text, timestamp bottom-right inside bubble (Caption, slightly muted)
+- Image/video thumbnails: inline in bubble, rounded corners, tap to view full screen
+- View-Once recovered items: purple badge overlay "View Once" on thumbnail
+- Deleted messages: italic text "This message was deleted" with red tint (NEW)
+
+Keyword Highlight (NEW):
+- If user has keyword alerts configured, matching keywords in messages are highlighted with a colored background (warning yellow) and a small alert icon appears next to the message
+
+────────────────────────────────
+SCREEN 6.7: View Once Recovery (app/(tabs)/viewonce.tsx)
+────────────────────────────────
+Header: "View Once" title (H2) + filter icon + sort icon (newest/oldest)
+
+Filter Chips: All / Photos / Videos / Voice Notes
+
+Grid (FlatList, 3 columns, numColumns={3}):
+Each cell:
+- Thumbnail (square, border radius 8): image preview for photos, video frame with play icon overlay for videos, waveform placeholder for voice
+- Contact avatar (20px) overlay bottom-left
+- Timestamp overlay bottom-right (semi-transparent dark background + white text)
+- Purple dot indicator top-right for newly recovered items (NEW)
+
+Tap cell → full-screen modal:
+- Horizontal FlatList with pagingEnabled for prev/next swipe
+- Header: contact name + timestamp + download icon (share via expo-sharing) + close button
+- For images: full-screen zoomable image (pinch-to-zoom using reanimated gestures)
+- For videos: simple player placeholder with play icon
+- For voice: waveform visualization with play button
+
+Long-press cell: select mode
+- Checkboxes appear on all cells
+- Bottom bar appears: "Download X items" button + "Select All" + "Cancel"
+- Download shares selected items via expo-sharing
+
+Loading: 9 skeleton squares in grid
+Empty state: eye-off icon + "No view-once media recovered"
+
+────────────────────────────────
+SCREEN 6.8: Notifications (app/(tabs)/notifications.tsx)
+────────────────────────────────
+Tab icon: bell with red badge (unread count) — badge updates in real-time
+
+Header:
+- "Notifications" title (H2)
+- "Mark all read" text button (primary green) — POST /api/notifications/mark-all-read
+- Trash icon: "Clear all" with confirm dialog — DELETE /api/notifications/clear
+
+Filter Chips: All / Online / Late Night / Limit Exceeded / Keyword Match (NEW) / System
+
+Notification List (FlatList):
+Each NotificationRow:
+- Left: type-specific icon in colored circle:
+  - Online: green circle, wifi icon
+  - Late Night: purple circle, moon icon
+  - Limit Exceeded: red circle, alert-triangle icon
+  - Keyword Match: orange circle, search icon (NEW)
+  - System: blue circle, info icon
+- Avatar (32px) of related contact
+- Message text (Body): "John came online" / "Sarah exceeded 4h limit" / "Keyword 'meet up' detected in chat with Alex" (NEW)
+- Relative timestamp (Caption, secondary)
+- Unread rows: slightly tinted background (green 0.05 opacity)
+- Swipe right: "Mark read" button (green)
+
+Grouped by time (NEW): "Today", "Yesterday", "This Week", "Older" — SectionList
+
+Pull-to-refresh, loading skeletons, empty state: bell-off icon + "All caught up" + "Your alerts will appear here"
+
+────────────────────────────────
+SCREEN 6.9: Reports (app/reports.tsx)
+────────────────────────────────
+Accessed from: Dashboard header, Contact Detail, or Settings
+
+Contact Picker:
+- Horizontal avatar scroll at top with names below (40px avatars)
+- Tap to select, green ring on selected
+- "Compare" button next to scroll (NEW — navigates to compare.tsx with selected contacts)
+
+Date Range:
+Chips: Today / This Week / This Month / Custom
+Custom: shows date range picker (two date inputs, from/to)
+
+Summary Row (4 stat cards):
+- Total Time (clock icon)
+- Daily Average (trending-up icon)
+- Most Active Day (calendar icon + day name)
+- Night Sessions (moon icon + count)
+
+Daily Usage Bar Chart (pure React Native Views):
+- Vertical bars, one per day in selected range
+- Bar height = percentage of max day's usage
+- X-axis: date labels (abbreviated)
+- Y-axis: time labels (0h, 2h, 4h...)
+- Tapping a bar: tooltip showing "March 28: 4h 23m"
+- Bars color: gradient from primary green (short) to warning (medium) to danger (long)
+
+Hourly Heatmap (24 × 7 grid):
+- Same as contact detail but for selected date range
+- Legend at bottom showing color intensity scale
+
+Session Table:
+- FlatList with sortable headers: Date | Start | End | Duration
+- Tap header to sort ascending/descending (toggle arrow icon)
+- Each row shows: date, start time, end time, duration chip (colored by length)
+- Alternating row backgrounds for readability
+
+Export Button:
+- "Export CSV" button at bottom → GET /api/reports/:contactId/export?format=csv → share via expo-sharing
+- "Share Report" button: generates a summary text and shares via share sheet (NEW)
+
+────────────────────────────────
+SCREEN 6.10: Subscription (app/subscription.tsx)
+────────────────────────────────
+Header: "Choose Your Plan" (H1) centered
+
+Toggle: Monthly / Annual (annual shows "Save 40%" badge) (NEW)
+
+3 Plan Cards (vertical scroll):
+- Weekly: basic features
+- Monthly: "Most Popular" badge (green pill top-right, angled), highlighted with green border + slightly larger scale
+- Quarterly: "Best Value" badge
+
+Each PlanCard:
+- Plan name (H3)
+- Price (H1, bold) + billing period (Caption)
+- Feature list: checkmark icons (green) for included, x icons (muted) for excluded
+- CTA button: "Choose Plan" (green for highlighted, outlined for others)
+- Current plan: green border + "Current Plan" badge, CTA becomes "Active" (disabled)
+
+Feature Comparison Table (below cards):
+- Scrollable table: features as rows, plans as columns
+- Green checkmarks, red x marks, or specific values
+- Sticky first column (feature names)
+
+Money-back guarantee badge at bottom: shield icon + "7-day money-back guarantee"
+
+────────────────────────────────
+SCREEN 6.11: Settings (app/(tabs)/settings.tsx)
+────────────────────────────────
+ScrollView with sections:
+
+PROFILE Section:
+- Avatar circle (64px, tap to change initials color — shows horizontal color picker row with 8 color options)
+- Username (H3), email (Body, secondary)
+- "Edit Profile" button
+
+SECURITY Section (NEW):
+- Biometric Lock toggle: "Require Face ID / Fingerprint" — uses expo-local-authentication to verify, persists preference to AsyncStorage
+- Auto-lock timer: "Lock after" picker (Immediately / 30 seconds / 1 minute / 5 minutes)
+- "Change Password" button
+
+SUBSCRIPTION Section:
+- Plan name + expiry date
+- Usage bar: "X of Y contacts tracked" with progress bar
+- "Upgrade" button → navigates to subscription.tsx
+
+NOTIFICATIONS Section:
+- Toggle: Push notifications (enable/disable)
+- Toggle: Sound
+- Toggle: Vibration
+- Toggle: Show preview in notification
+
+DO NOT DISTURB Section:
+- List of DND windows: each shows "label: startTime – endTime", swipe left to delete
+- "Add DND Window" button → bottom sheet with:
+  - Label TextInput
+  - Start time picker
+  - End time picker
+  - Save button (green)
+
+ALERTS Section:
+- "Late Night Starts At" — time picker (default 23:00)
+- "Daily Usage Limit" — slider 0–12h with value label
+- "Keyword Alerts" — tap to navigate to keyword-alerts.tsx (NEW)
+- "Activity Spike Alert" toggle: notify when a contact's usage suddenly increases by >200% (NEW)
+
+THEME Section:
+- SegmentedControl: Light / Dark / System
+- Persisted to AsyncStorage, applied instantly across entire app via ThemeProvider
+
+DATA Section:
+- "Export All Data" → generates JSON of all contacts + sessions + settings → share via expo-sharing
+- "Import Data" (NEW) → pick JSON file and import contacts
+- "Clear Cache" → clears React Query cache + AsyncStorage non-critical data
+- "Delete Account" — 3-step confirmation:
+  - First tap: Alert "Are you sure?" with Cancel/Continue
+  - Second tap: Alert "This cannot be undone. All data will be permanently deleted." with Cancel/Delete
+  - Third tap: TextInput requiring user to type "DELETE" to confirm, then red Delete button
+
+APP INFO Section:
+- App version: "WaTracker Pro v2.0" (Caption, muted)
+- Tapping version 7 times: unlocks dev info bottom sheet showing: API URL, user ID, session expiry, cache size, React Query active queries count
+- "Rate Us" button (NEW) — opens app store review prompt
+- "Help & Support" button (NEW) — opens in-app help/FAQ list
+- "Terms of Service" and "Privacy Policy" links
+
+════════════════════════════════════════════════════════
+SECTION 7: NEW FEATURE SCREENS
+════════════════════════════════════════════════════════
+
+────────────────────────────────
+SCREEN 7.1: Family Dashboard (app/family-dashboard.tsx) — NEW
+────────────────────────────────
+Purpose: Unified view of all tracked contacts for parents monitoring multiple family members
+
+Header: "Family Dashboard" (H2) + date range selector (Today / Week)
+
+Family Overview Card:
+- "Total Family Screen Time Today: 12h 34m" (H2, centered)
+- Circular activity ring (like Apple Watch rings — pure View + reanimated) showing family total vs. set limit
+- "X of Y members online now" subtitle
+
+Member Cards (FlatList, horizontal scroll):
+Each FamilyMemberCard:
+- Avatar (56px) with online dot
+- Name
+- Today's usage (bold) with mini progress ring
+- Trend arrow: up (red) if usage increased vs yesterday, down (green) if decreased
+- Tap → navigates to contact/[id]
+
+Family Activity Timeline:
+- Combined timeline showing all family members' online/offline events interleaved
+- Color-coded by member (each member gets a unique color from palette)
+- "Now" indicator line at current time
+
+Usage Comparison Bar Chart:
+- Horizontal bars, one per family member
+- Bar length = today's usage
+- Sorted by most active at top
+- Tap bar → navigate to contact detail
+
+Peak Family Activity:
+- Small heatmap showing when the family is most collectively active
+- Highlighted cells = 2+ members online simultaneously
+
+────────────────────────────────
+SCREEN 7.2: Contact Comparison (app/compare.tsx) — NEW
+────────────────────────────────
+Purpose: Side-by-side comparison of 2–4 contacts' activity patterns
+
+Contact Selector: multi-select avatar row at top (min 2, max 4)
+
+Comparison Cards:
+- Side-by-side stat cards for each selected contact: Total Time, Avg Session, Peak Hour
+- Color-coded per contact (consistent colors throughout)
+
+Overlay Bar Chart:
+- Grouped bars (one group per day), bars colored by contact
+- Legend at top showing contact → color mapping
+
+Pattern Comparison:
+- "Most similar activity pattern: John & Sarah (87% overlap)"
+- "Most different: John & Alex (23% overlap)"
+
+Simultaneous Online:
+- "John and Sarah were online at the same time 14 times this week"
+- List of overlap sessions with times
+
+────────────────────────────────
+SCREEN 7.3: Keyword Alerts (app/keyword-alerts.tsx) — NEW
+────────────────────────────────
+Purpose: Configure keywords that trigger alerts when detected in tracked conversations
+
+Header: "Keyword Alerts" (H2) + info icon (shows explanation toast)
+
+Active Keywords List (FlatList):
+Each row:
+- KeywordBadge: colored pill showing the keyword
+- Severity indicator: green (low) / yellow (medium) / red (high)
+- Match count: "Triggered 3 times"
+- Swipe left to delete
+
+Add Keyword Section (sticky bottom):
+- TextInput for keyword
+- Severity picker: Low / Medium / High (3 colored buttons)
+- "Add Alert" button (green)
+
+Predefined Categories (NEW):
+- Expandable sections: "Safety", "Substances", "Bullying", "Location"
+- Each contains suggested keywords users can tap to add
+- These are locally defined arrays — not from API
+
+Recent Matches (below keywords):
+- FlatList showing recent keyword hits: keyword badge + contact name + message preview snippet + timestamp
+- Tap to open the relevant chat
+
+────────────────────────────────
+SCREEN 7.4: Activity Timeline (app/activity-timeline.tsx) — NEW
+────────────────────────────────
+Purpose: Full-day visual timeline showing all contacts' activity
+
+Date Picker: left/right arrows to navigate days + tap date to open calendar
+
+Timeline View:
+- 24-hour vertical timeline (00:00 at top, 23:59 at bottom)
+- "Now" indicator: red horizontal line at current time with "Now" label
+- Each contact's activity: colored horizontal bars spanning their online duration
+- Bars positioned at their actual time slots
+- Contact avatar + name label on each bar
+- Overlapping activities from different contacts shown on parallel tracks
+
+Summary at top:
+- "March 30" (H2)
+- "5 contacts active, 47 sessions, 23h total"
+
+Filter: toggle which contacts to show/hide
+
+────────────────────────────────
+SCREEN 7.5: Contact Groups (app/contact-groups.tsx) — NEW
+────────────────────────────────
+Purpose: Organize contacts into custom groups (e.g., "Kids", "Employees", "Family")
+
+Header: "Groups" (H2) + "Create Group" button
+
+Groups List:
+Each group card:
+- Group name (H3)
+- Avatar row: overlapping small avatars (max 5 shown + "+3" badge)
+- Member count: "5 members"
+- Aggregate stat: "Total today: 8h 34m"
+- Tap → shows group detail with member list, group stats, group activity chart
+- Long press → Edit group name, add/remove members, delete group
+
+Create Group Bottom Sheet:
+- Group name TextInput
+- Contact multi-select list with checkboxes
+- "Create" button
+
+═══════════════════════════════════════════════════════════════════
+SECTION 8: CROSS-CUTTING REQUIREMENTS
+═══════════════════════════════════════════════════════════════════
+
+Safe Areas:
+- useSafeAreaInsets() on EVERY screen — no hardcoded top/bottom padding anywhere
+- Web platform fallback: top inset 67px, tab bar height 84px (50 + 34 bottom safe area)
+
+Loading States:
+- Every list screen must have: skeleton shimmer loading state, error state with retry button, pull-to-refresh
+- Use React Query's isLoading, isError, refetch for all states
+- Skeleton components match the exact layout of the real content
+
+Haptic Feedback (expo-haptics):
+- Impact Medium: add contact success, mark notification read, favorite toggle, tab switch
+- Impact Heavy: destructive action confirmation (delete contact, clear notifications, delete account)
+- Selection: filter chip tap, toggle switch
+
+Destructive Actions:
+- ALL destructive actions use Alert.alert with a red "Delete" styled button + "Cancel" button
+- Delete account uses 3-step escalating confirmation (described in Settings)
+
+Timestamps:
+- All timestamps are relative: "just now", "3 min ago", "1h ago", "Yesterday 22:15", "Mar 28 14:30"
+- Auto-update every 60 seconds via useRelativeTime hook (useEffect + setInterval that triggers re-render)
+- Use date-fns for formatting
+
+Online Pulsing Dot:
+- Reusable PulsingDot component
+- react-native-reanimated: useSharedValue + withRepeat + withSequence + withTiming
+- Scale: 1 → 1.4 → 1, duration 1200ms total, easing: Easing.inOut(Easing.ease)
+- Green (#25D366) fill with slight green shadow/glow
+
+Error Handling:
+- Custom ErrorBoundary component wrapping the entire app
+- On error: shows error message + "Restart App" button using reloadAppAsync from expo
+- Per-screen: error state with icon + message + "Try Again" button that calls refetch()
+- API errors: toast notification with error message
+
+Accessibility:
+- All touchable elements have accessibilityLabel and accessibilityRole
+- Minimum touch target: 44x44
+- Color contrast ratios meet WCAG AA standards
+- Screen reader support for all status indicators ("John is currently online")
+
+Performance:
+- FlatList with scrollEnabled={data.length > 0} to prevent empty scroll bounce
+- FlatList with getItemLayout where possible for fixed-height rows
+- React.memo on all list item components
+- useCallback on all event handlers passed to lists
+- Lazy load heavy screens using React.lazy + Suspense
+- Image caching for avatars and media thumbnails
+
+Biometric Lock (NEW):
+- When enabled in settings: uses expo-local-authentication
+- Triggers when app returns from background after configured delay
+- Shows full-screen overlay with lock icon + "Unlock with Face ID" button
+- Fallback: "Use Passcode" option
+- On failure: stays locked, shows error message
+- Persists lock preference + timeout to AsyncStorage
+
+Push Notifications (NEW):
+- expo-notifications for registration and handling
+- NotificationProvider in root layout handles permission request on first launch
+- Notification tap navigates to relevant screen (contact detail, chat, notifications tab)
+- Badge count synced with unread notifications count
+
+Network Status (NEW):
+- Detect offline state using NetInfo or equivalent
+- Show persistent banner at top: "No internet connection" in red
+- Queue failed mutations and retry when back online (React Query offline support)
+- Show cached data with "Last updated X minutes ago" indicator
+
+═══════════════════════════════════════════════════════════════════
+SECTION 9: PHASED BUILD PLAN
+═══════════════════════════════════════════════════════════════════
+
+IMPORTANT: Build each phase completely, test it, create a checkpoint, then start the next phase. Do not skip phases or combine them.
+
+PHASE 1 — Foundation & Auth (Checkpoint after completion)
+  Step 1: Set up Expo project with TypeScript, install all dependencies
+  Step 2: Create constants/colors.ts with full color palette + useColors() hook
+  Step 3: Create constants/typography.ts + constants/spacing.ts
+  Step 4: Create lib/query-client.ts with getApiUrl() and QueryClient configuration
+  Step 5: Create lib/api.ts fetch wrapper (credentials: 'include', error handling, JSON parsing)
+  Step 6: Create providers/AuthProvider.tsx with login, register, logout, me() functions
+  Step 7: Create providers/ThemeProvider.tsx with light/dark/system modes + AsyncStorage persistence
+  Step 8: Create app/_layout.tsx root layout with all providers in correct order
+  Step 9: Create app/auth.tsx with login/register forms, validation, and API integration
+  Step 10: Create auth gate logic in root layout
+  TEST: Register a user, login, logout, verify auth persistence
+
+PHASE 2 — Core UI Components (Checkpoint after completion)
+  Step 1: SkeletonLoader, PulsingDot, AnimatedRing components
+  Step 2: AvatarCircle, StatCard, BadgeCount, ChipFilter components
+  Step 3: EmptyState, ErrorState, ConfirmDialog components
+  Step 4: SearchBar, FloatingActionButton, SegmentedControl
+  Step 5: BottomSheet, SwipeableRow, ToggleSwitch, DurationChip
+  Step 6: Custom ErrorBoundary with reloadAppAsync
+  TEST: Import and render each component in a test screen to verify
+
+PHASE 3 — Tab Navigation & Dashboard (Checkpoint after completion)
+  Step 1: Create app/(tabs)/_layout.tsx with NativeTabs + liquid glass check
+  Step 2: Create app/onboarding.tsx with carousel
+  Step 3: Build Dashboard screen with header, stats strip, filter chips
+  Step 4: Build ContactCard component with avatar, sparkline, online dot
+  Step 5: Build contact list FlatList with long-press actions
+  Step 6: Build FAB with add-contact bottom sheet
+  Step 7: Add pull-to-refresh, loading skeletons, empty state
+  Step 8: Add Quick Actions row
+  TEST: Full dashboard flow — view contacts, filter, search, add contact, long-press actions
+
+PHASE 4 — Contact Detail & Sessions (Checkpoint after completion)
+  Step 1: Create app/contact/[id].tsx with profile section and animated ring
+  Step 2: Build live online timer
+  Step 3: Build stats strip
+  Step 4: Build activity timeline SectionList
+  Step 5: Build weekly bar chart (pure Views)
+  Step 6: Build peak hours heatmap
+  Step 7: Build notes section with auto-save
+  TEST: Navigate to contact detail, verify all sections render with API data
+
+PHASE 5 — Chat & View Once (Checkpoint after completion)
+  Step 1: Build app/(tabs)/chat.tsx conversation list
+  Step 2: Build app/chat/[id].tsx chat view with WhatsApp-style bubbles
+  Step 3: Add privacy mode toggle
+  Step 4: Build app/(tabs)/viewonce.tsx grid view
+  Step 5: Build full-screen media viewer modal
+  Step 6: Add select mode with multi-download
+  TEST: Browse conversations, open chat, toggle privacy mode, browse view-once media
+
+PHASE 6 — Notifications & Reports (Checkpoint after completion)
+  Step 1: Build app/(tabs)/notifications.tsx with filter, sections, swipe actions
+  Step 2: Add badge count to tab icon
+  Step 3: Build app/reports.tsx with contact picker, date range
+  Step 4: Build daily usage bar chart
+  Step 5: Build hourly heatmap
+  Step 6: Build session table with sorting
+  Step 7: Add CSV export functionality
+  TEST: View notifications, mark read, filter. Generate reports, export CSV.
+
+PHASE 7 — Settings & Subscription (Checkpoint after completion)
+  Step 1: Build app/(tabs)/settings.tsx with all sections
+  Step 2: Build biometric lock (expo-local-authentication integration)
+  Step 3: Build DND management with bottom sheet time pickers
+  Step 4: Build theme switcher with instant apply
+  Step 5: Build delete account 3-step flow
+  Step 6: Build app/subscription.tsx with plan cards and comparison table
+  Step 7: Add dev info easter egg (7 taps on version)
+  TEST: Toggle all settings, verify persistence. View subscription plans.
+
+PHASE 8 — New Features (Checkpoint after completion)
+  Step 1: Build app/family-dashboard.tsx
+  Step 2: Build app/compare.tsx
+  Step 3: Build app/keyword-alerts.tsx
+  Step 4: Build app/activity-timeline.tsx
+  Step 5: Build app/contact-groups.tsx
+  Step 6: Add favorites system to contacts
+  Step 7: Add network status banner
+  Step 8: Add push notification handling
+  TEST: Navigate through all new screens, verify data flow and navigation
+
+PHASE 9 — Polish & Performance (Checkpoint after completion)
+  Step 1: Add haptic feedback to all specified interactions
+  Step 2: Verify all screens have loading/error/empty states
+  Step 3: Add React.memo to all list item components
+  Step 4: Add accessibility labels to all interactive elements
+  Step 5: Verify safe area insets on all screens
+  Step 6: Test dark mode on every screen — ensure no hardcoded colors
+  Step 7: Run through all destructive actions — verify confirmation dialogs
+  Step 8: Final visual polish — spacing consistency, animation smoothness
+  TEST: Full end-to-end walkthrough of entire app in both light and dark mode
+
+═══════════════════════════════════════════════════════════════════
+SECTION 10: CRITICAL RULES — DO NOT VIOLATE
+═══════════════════════════════════════════════════════════════════
+
+1. Do NOT rebuild, modify, or restart the backend server on port 3001
+2. Do NOT hardcode any hex color values in component files — always use useColors()
+3. Do NOT install any charting library — all charts are pure React Native Views
+4. Do NOT use emojis anywhere in the UI — only @expo/vector-icons
+5. Do NOT use styled-components, NativeWind, or Tailwind — only StyleSheet
+6. Do NOT skip loading/error/empty states on any list screen
+7. Do NOT hardcode localhost or any hostname — always use getApiUrl()
+8. Do NOT combine multiple phases — build one phase, test, checkpoint, then next
+9. Do NOT make changes to files outside the current phase's scope
+10. ALL fetch/axios calls must include credentials: 'include'
+11. ALL new API endpoints should gracefully handle 404 (backend may not have them yet)
+12. ALL animations use react-native-reanimated — no Animated API from React Native core
+13. ALL forms have inline validation before API submission
+14. EVERY screen uses useSafeAreaInsets() — zero hardcoded padding for notch/status bar
+
+Start with Phase 1. Present your implementation plan for Phase 1 and wait for my confirmation before writing any code.

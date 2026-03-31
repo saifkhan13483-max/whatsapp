@@ -1,0 +1,61 @@
+export const API = {
+  AUTH: {
+    REGISTER: "/auth/register",
+    LOGIN: "/auth/login",
+    LOGOUT: "/auth/logout",
+    ME: "/auth/me",
+  },
+  CONTACTS: {
+    LIST: "/contacts",
+    CREATE: "/contacts",
+    FAVORITES: "/contacts/favorites",
+    GROUPS: "/contacts/groups",
+    BY_ID: (id: number) => `/contacts/${id}`,
+    FAVORITE: (id: number) => `/contacts/${id}/favorite`,
+    SESSIONS: (id: number) => `/contacts/${id}/sessions`,
+    STATS: (id: number) => `/contacts/${id}/stats`,
+    HOURLY: (id: number) => `/contacts/${id}/hourly`,
+    STATUS: (id: number) => `/contacts/${id}/status`,
+    PATTERNS: (id: number) => `/contacts/${id}/patterns`,
+    GROUP_BY_ID: (id: number) => `/contacts/groups/${id}`,
+  },
+  CHAT: {
+    CONVERSATIONS: "/conversations",
+    MESSAGES: (contactId: number) => `/messages/${contactId}`,
+    VIEW_ONCE: "/view-once",
+  },
+  NOTIFICATIONS: {
+    LIST: "/notifications",
+    MARK_READ: (id: number) => `/notifications/mark-read/${id}`,
+    MARK_ALL_READ: "/notifications/mark-all-read",
+    CLEAR: "/notifications/clear",
+  },
+  REPORTS: {
+    BY_CONTACT: (id: number) => `/reports/${id}`,
+    EXPORT: (id: number) => `/reports/${id}/export`,
+  },
+  SUBSCRIPTION: {
+    PLANS: "/subscription/plans",
+    CURRENT: "/subscription/current",
+    UPGRADE: "/subscription/upgrade",
+  },
+  SETTINGS: {
+    GET: "/settings",
+    UPDATE: "/settings",
+    DND: "/settings/dnd",
+    DND_BY_ID: (id: number) => `/settings/dnd/${id}`,
+  },
+  ACTIVITY: {
+    FAMILY_SUMMARY: "/activity/family-summary",
+    COMPARISONS: "/activity/comparisons",
+    TIMELINE: "/activity/timeline",
+  },
+  ALERTS: {
+    KEYWORD: "/alerts/keyword",
+    KEYWORDS: "/alerts/keywords",
+    KEYWORD_BY_ID: (id: number) => `/alerts/keyword/${id}`,
+  },
+  GEOFENCE: {
+    ZONES: "/geofence/zones",
+  },
+} as const;

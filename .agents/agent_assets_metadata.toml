@@ -1,0 +1,14 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "imGhRFxMV6-b9_n1BlPxV"
+uri = "file://artifacts/mobile/assets/images/icon.png"
+type = "image"
+title = "watracker pro app icon"
+
+[[generated]]
+id = "RmpNQsBi4HaJiHotprOUj"
+uri = "file://artifacts/mobile/assets/images/splash-icon.png"
+type = "image"
+title = "watracker pro splash icon"
