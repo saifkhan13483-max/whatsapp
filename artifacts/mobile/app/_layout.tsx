@@ -15,6 +15,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { BiometricGate } from "@/components/ui/BiometricGate";
+import { NetworkBanner } from "@/components/ui/NetworkBanner";
 import { AuthProvider, useAuth } from "@/providers/AuthProvider";
 import { ThemeProvider } from "@/providers/ThemeProvider";
 import { NotificationProvider } from "@/providers/NotificationProvider";
@@ -119,7 +120,10 @@ export default function RootLayout() {
               <ThemeProvider>
                 <NotificationProvider>
                   <AuthGate>
-                    <RootNavigator />
+                    <View style={{ flex: 1 }}>
+                      <RootNavigator />
+                      <NetworkBanner />
+                    </View>
                   </AuthGate>
                 </NotificationProvider>
               </ThemeProvider>
