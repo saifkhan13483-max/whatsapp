@@ -83,6 +83,7 @@ function RootNavigator() {
       <Stack.Screen name="contact-groups" options={{ headerShown: false }} />
       <Stack.Screen name="compare" options={{ headerShown: false }} />
       <Stack.Screen name="activity-timeline" options={{ headerShown: false }} />
+      <Stack.Screen name="connect-whatsapp" options={{ headerShown: false }} />
     </Stack>
   );
 }

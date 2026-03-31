@@ -212,7 +212,7 @@ export default function ChatTrackerScreen() {
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       {/* Header */}
       <LinearGradient
-        colors={[colors.primaryDarkest, colors.primaryDark] as string[]}
+        colors={[colors.primaryDarkest, colors.primaryDark] as [string, string]}
         style={[styles.header, { paddingTop: topPad + spacing.sm }]}
       >
         <View style={styles.headerRow}>

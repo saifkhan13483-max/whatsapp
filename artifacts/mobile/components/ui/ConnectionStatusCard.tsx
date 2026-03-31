@@ -13,6 +13,8 @@ import { spacing } from "@/constants/spacing";
 import type { ConnectionStatus } from "@/hooks/useWhatsAppConnection";
 import { formatRelativeTime } from "@/lib/formatters";
 
+type FeatherName = React.ComponentProps<typeof Feather>["name"];
+
 interface ConnectionStatusCardProps {
   status: ConnectionStatus;
   phoneNumber?: string;
@@ -38,11 +40,11 @@ export function ConnectionStatusCard({
 }: ConnectionStatusCardProps) {
   const colors = useColors();
 
-  const configs = {
+  const configs: Record<string, { bg: string; borderColor: string; iconName: FeatherName; iconColor: string; title: string; subtitle: string }> = {
     not_connected: {
       bg: colors.surface,
       borderColor: colors.border,
-      iconName: "link-off" as const,
+      iconName: "wifi-off",
       iconColor: colors.muted,
       title: "Not Connected",
       subtitle: "Link your WhatsApp account to start monitoring",
@@ -50,7 +52,7 @@ export function ConnectionStatusCard({
     pending_pairing: {
       bg: colors.warning + "15",
       borderColor: colors.warning + "60",
-      iconName: "clock" as const,
+      iconName: "clock",
       iconColor: colors.warning,
       title: "Pairing in Progress...",
       subtitle: "Waiting for you to enter the code in WhatsApp",
@@ -58,7 +60,7 @@ export function ConnectionStatusCard({
     connected: {
       bg: colors.primary + "10",
       borderColor: colors.primary + "40",
-      iconName: "check-circle" as const,
+      iconName: "check-circle",
       iconColor: colors.primary,
       title: "Connected",
       subtitle: phoneNumber ?? "WhatsApp linked",
@@ -66,7 +68,7 @@ export function ConnectionStatusCard({
     disconnected: {
       bg: colors.danger + "10",
       borderColor: colors.danger + "40",
-      iconName: "alert-circle" as const,
+      iconName: "alert-circle",
       iconColor: colors.danger,
       title: "Connection Lost",
       subtitle: "Your WhatsApp session was disconnected",
@@ -145,7 +147,7 @@ export function ConnectionStatusCard({
               <ActivityIndicator size="small" color={colors.danger} />
             ) : (
               <>
-                <Feather name="link-off" size={14} color={colors.danger} />
+                <Feather name={"wifi-off" as FeatherName} size={14} color={colors.danger} />
                 <Text style={[typography.bodyMedium, { color: colors.danger }]}>Disconnect</Text>
               </>
             )}

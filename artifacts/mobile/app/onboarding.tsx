@@ -98,7 +98,7 @@ export default function OnboardingScreen() {
         renderItem={({ item }) => (
           <View style={[styles.slide, { width }]}>
             <LinearGradient
-              colors={[item.color + "22", "transparent"] as string[]}
+              colors={[item.color + "22", "transparent"] as [string, string]}
               style={styles.iconWrap}
             >
               <Ionicons name={item.icon} size={80} color={item.color} />

@@ -18,6 +18,10 @@ router.get("/family-summary", async (req: AuthRequest, res) => {
     const dayStart = new Date(now);
     dayStart.setHours(0, 0, 0, 0);
 
+    const yesterdayStart = new Date(dayStart);
+    yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+    const yesterdayEnd = new Date(dayStart);
+
     const members = await Promise.all(
       contacts.map(async (c) => {
         const todaySessions = await db
@@ -29,7 +33,22 @@ router.get("/family-summary", async (req: AuthRequest, res) => {
               gte(activitySessionsTable.startTime, dayStart)
             )
           );
+        const yesterdaySessions = await db
+          .select()
+          .from(activitySessionsTable)
+          .where(
+            and(
+              eq(activitySessionsTable.contactId, c.id),
+              gte(activitySessionsTable.startTime, yesterdayStart),
+              sql`${activitySessionsTable.startTime} < ${yesterdayEnd}`
+            )
+          );
         const minutesToday = todaySessions.reduce((sum, s) => sum + s.durationMinutes, 0);
+        const minutesYesterday = yesterdaySessions.reduce((sum, s) => sum + s.durationMinutes, 0);
+        const sessions = todaySessions.map((s) => ({
+          startTime: s.startTime.toISOString(),
+          endTime: s.endTime ? s.endTime.toISOString() : new Date().toISOString(),
+        }));
         return {
           id: c.id,
           name: c.name,
@@ -37,18 +56,22 @@ router.get("/family-summary", async (req: AuthRequest, res) => {
           isOnline: c.isOnline,
           lastSeen: c.lastSeen,
           minutesToday,
+          minutesYesterday,
           sessionsToday: todaySessions.length,
+          sessions,
         };
       })
     );
 
     const onlineNow = members.filter((m) => m.isOnline).length;
     const totalMinutesToday = members.reduce((sum, m) => sum + m.minutesToday, 0);
+    const totalLimitMinutes = 480;
 
     res.json({
       totalContacts: contacts.length,
       onlineNow,
       totalMinutesToday,
+      totalLimitMinutes,
       alerts: 0,
       members,
     });

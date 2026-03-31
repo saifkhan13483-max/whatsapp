@@ -361,7 +361,7 @@ export default function DashboardScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <LinearGradient
-        colors={[colors.primaryDarkest, colors.primaryDark] as string[]}
+        colors={[colors.primaryDarkest, colors.primaryDark] as [string, string]}
         style={[styles.header, { paddingTop: topPad + spacing.sm }]}
       >
         <View style={styles.headerRow}>

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, Modal, ScrollView } from "react-native";
-import { useColors } from "@/constants/colors";
+import { useColors } from "@/hooks/useColors";
 
 interface Props {
   visible: boolean;
@@ -19,9 +19,9 @@ const MINUTES = [0, 15, 30, 45];
 
 export function TimePickerSheet({ visible, title = "Select Time", value, onSelect, onClose }: Props) {
   const colors = useColors();
-  const [parts] = (value || "00:00").split(":").map(Number) as [number, number, ...number[]];
-  const [hour, setHour] = useState(parts[0] ?? 0);
-  const [minute, setMinute] = useState(parts[1] ?? 0);
+  const timeParts = (value || "00:00").split(":").map(Number);
+  const [hour, setHour] = useState(timeParts[0] ?? 0);
+  const [minute, setMinute] = useState(timeParts[1] ?? 0);
 
   function confirm() {
     onSelect(`${pad(hour)}:${pad(minute)}`);

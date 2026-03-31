@@ -14,6 +14,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons, Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Sharing from "expo-sharing";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/useColors";
@@ -119,8 +120,7 @@ export default function ReportsScreen() {
       const reader = new FileReader();
       reader.onload = async () => {
         const base64 = (reader.result as string).split(",")[1];
-        const { FileSystem } = await import("expo-file-system");
-        const uri = FileSystem.cacheDirectory + `report-${activeId}-${Date.now()}.csv`;
+        const uri = (FileSystem.cacheDirectory ?? "") + `report-${activeId}-${Date.now()}.csv`;
         await FileSystem.writeAsStringAsync(uri, base64!, { encoding: FileSystem.EncodingType.Base64 });
         await Sharing.shareAsync(uri, { mimeType: "text/csv", dialogTitle: "Export Activity Report" });
       };

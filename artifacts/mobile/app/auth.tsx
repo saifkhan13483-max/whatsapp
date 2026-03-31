@@ -95,7 +95,7 @@ export default function AuthScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <LinearGradient
-        colors={[colors.primaryDarkest, colors.primaryDark] as string[]}
+        colors={[colors.primaryDarkest, colors.primaryDark] as [string, string]}
         style={[styles.gradient, { height: gradientHeight, paddingTop: Platform.OS === "web" ? 67 : insets.top + 16 }]}
       >
         <View style={[styles.logoCircle, { backgroundColor: colors.surface }]}>

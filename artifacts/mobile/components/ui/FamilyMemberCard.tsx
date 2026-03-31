@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { useColors } from "@/constants/colors";
+import { useColors } from "@/hooks/useColors";
 import { AvatarCircle } from "./AvatarCircle";
 import { PulsingDot } from "./PulsingDot";
 import { SparklineChart } from "./SparklineChart";
@@ -36,7 +36,7 @@ export function FamilyMemberCard({ member, onPress }: Props) {
     >
       <View style={styles.header}>
         <View style={styles.avatarWrap}>
-          <AvatarCircle name={member.name} size={44} uri={member.avatarUrl} />
+          <AvatarCircle name={member.name} size={44} />
           {member.isOnline && (
             <View style={styles.dotWrap}>
               <PulsingDot color={colors.online} size={10} />

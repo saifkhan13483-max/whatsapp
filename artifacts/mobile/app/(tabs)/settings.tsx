@@ -567,7 +567,7 @@ export default function SettingsScreen() {
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       {/* Profile Header */}
       <LinearGradient
-        colors={[colors.primaryDarkest, colors.primaryDark] as string[]}
+        colors={[colors.primaryDarkest, colors.primaryDark] as [string, string]}
         style={[styles.profileHeader, { paddingTop: topPad + spacing.sm }]}
       >
         <View style={styles.profileRow}>
