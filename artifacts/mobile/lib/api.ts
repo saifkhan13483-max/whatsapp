@@ -1,4 +1,15 @@
-const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "";
+function getBaseUrl(): string {
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL;
+  }
+  const domain = process.env.EXPO_PUBLIC_DOMAIN;
+  if (domain) {
+    return `https://${domain}:8080`;
+  }
+  return "";
+}
+
+const BASE_URL = getBaseUrl();
 
 export async function apiFetch<T>(
   path: string,

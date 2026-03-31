@@ -129,13 +129,25 @@ router.get("/", async (req: AuthRequest, res) => {
 
 router.post("/", async (req: AuthRequest, res) => {
   try {
-    const { name, phoneNumber } = req.body;
+    const { name, phoneNumber, phone, notes, alertEnabled } = req.body;
+    const resolvedPhone = phoneNumber ?? phone;
+    if (!name || !resolvedPhone) {
+      res.status(400).json({ error: "name and phoneNumber are required" });
+      return;
+    }
     const [contact] = await db
       .insert(contactsTable)
-      .values({ userId: req.userId!, name, phoneNumber })
+      .values({
+        userId: req.userId!,
+        name,
+        phoneNumber: resolvedPhone,
+        notes: notes ?? null,
+        alertEnabled: alertEnabled ?? true,
+      })
       .returning();
     res.json(contact);
-  } catch {
+  } catch (err) {
+    console.error("Create contact error:", err);
     res.status(500).json({ error: "Failed to create contact" });
   }
 });

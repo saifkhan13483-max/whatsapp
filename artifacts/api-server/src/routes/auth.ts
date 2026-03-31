@@ -24,6 +24,15 @@ router.post("/register", async (req, res) => {
       res.status(400).json({ error: "Email already registered" });
       return;
     }
+    const existingUsername = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.username, username))
+      .limit(1);
+    if (existingUsername.length > 0) {
+      res.status(400).json({ error: "Username already taken" });
+      return;
+    }
     const passwordHash = await bcrypt.hash(password, 10);
     const [user] = await db
       .insert(usersTable)
@@ -39,6 +48,7 @@ router.post("/register", async (req, res) => {
     });
     res.json({ id: user.id, username: user.username, email: user.email });
   } catch (err) {
+    console.error("Registration error:", err);
     res.status(500).json({ error: "Registration failed" });
   }
 });
