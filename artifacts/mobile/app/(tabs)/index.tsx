@@ -8,7 +8,6 @@ import {
   ScrollView,
   RefreshControl,
   Platform,
-  Animated,
   TextInput,
   KeyboardAvoidingView,
   Modal,
@@ -18,6 +17,12 @@ import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/useColors";
@@ -54,7 +59,7 @@ const QUICK_ACTIONS = [
   { icon: "diamond" as const, label: "Upgrade", route: "/subscription" },
 ];
 
-function Sparkline({ values }: { values: number[] }) {
+const Sparkline = React.memo(function Sparkline({ values }: { values: number[] }) {
   const colors = useColors();
   if (!values || values.length < 2) return <View style={{ width: 48 }} />;
   const max = Math.max(...values, 1);
@@ -75,9 +80,9 @@ function Sparkline({ values }: { values: number[] }) {
       ))}
     </View>
   );
-}
+});
 
-function EnhancedContactCard({
+const EnhancedContactCard = React.memo(function EnhancedContactCard({
   contact,
   isFavorite,
   onPress,
@@ -95,6 +100,8 @@ function EnhancedContactCard({
       style={[styles.contactCard, { backgroundColor: colors.card, borderColor: colors.border }]}
       onPress={onPress}
       activeOpacity={0.7}
+      accessibilityLabel={`Contact ${contact.name}, ${contact.isOnline ? "online" : "offline"}`}
+      accessibilityRole="button"
       onLongPress={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         Alert.alert(contact.name, undefined, [
@@ -121,7 +128,13 @@ function EnhancedContactCard({
       </View>
       <View style={styles.contactRight}>
         <Sparkline values={contact.sparkline ?? [0, 1, 2, 1, 3, 2, 1, 2]} />
-        <TouchableOpacity onPress={onFavorite} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ marginTop: 4 }}>
+        <TouchableOpacity
+          onPress={onFavorite}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          style={{ marginTop: 4 }}
+          accessibilityLabel={isFavorite ? `Remove ${contact.name} from favorites` : `Add ${contact.name} to favorites`}
+          accessibilityRole="button"
+        >
           <Ionicons
             name={isFavorite ? "star" : "star-outline"}
             size={14}
@@ -131,7 +144,7 @@ function EnhancedContactCard({
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 function AddContactSheet({
   visible,
@@ -145,15 +158,20 @@ function AddContactSheet({
   const addContact = useAddContact();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const slideAnim = useRef(new Animated.Value(0)).current;
+
+  const slideY = useSharedValue(400);
 
   React.useEffect(() => {
     if (visible) {
-      Animated.spring(slideAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 10 }).start();
+      slideY.value = withSpring(0, { damping: 18, stiffness: 200 });
     } else {
-      Animated.timing(slideAnim, { toValue: 0, useNativeDriver: true, duration: 200 }).start();
+      slideY.value = withTiming(400, { duration: 200 });
     }
   }, [visible]);
+
+  const slideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: slideY.value }],
+  }));
 
   async function handleAdd() {
     if (!name.trim() || !phone.trim()) return;
@@ -178,15 +196,8 @@ function AddContactSheet({
           {
             backgroundColor: colors.card,
             paddingBottom: insets.bottom + spacing.base,
-            transform: [
-              {
-                translateY: slideAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [400, 0],
-                }),
-              },
-            ],
           },
+          slideStyle,
         ]}
       >
         <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
@@ -199,6 +210,7 @@ function AddContactSheet({
           placeholderTextColor={colors.muted}
           value={name}
           onChangeText={setName}
+          accessibilityLabel="Contact name input"
         />
 
         <Text style={[styles.fieldLabel, { color: colors.secondaryText }]}>Phone Number</Text>
@@ -209,15 +221,18 @@ function AddContactSheet({
           value={phone}
           onChangeText={setPhone}
           keyboardType="phone-pad"
+          accessibilityLabel="Phone number input"
         />
 
         <TouchableOpacity
           style={[styles.sheetBtn, { backgroundColor: colors.primary }]}
           onPress={handleAdd}
           disabled={addContact.isPending}
+          accessibilityLabel="Start tracking this contact"
+          accessibilityRole="button"
         >
-          <Ionicons name="person-add" size={18} color="#fff" />
-          <Text style={styles.sheetBtnText}>Start Tracking</Text>
+          <Ionicons name="person-add" size={18} color={colors.headerText} />
+          <Text style={[styles.sheetBtnText, { color: colors.headerText }]}>Start Tracking</Text>
         </TouchableOpacity>
       </Animated.View>
     </Modal>
@@ -241,17 +256,27 @@ export default function DashboardScreen() {
   const [addSheetVisible, setAddSheetVisible] = useState(false);
   const [favorites, setFavorites] = useState<Set<number>>(new Set());
 
-  const searchAnim = useRef(new Animated.Value(0)).current;
+  const searchProgress = useSharedValue(0);
 
   const onlineContacts = contacts.filter((c) => (c as any).isOnline);
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   function toggleSearch() {
-    const toValue = searchVisible ? 0 : 1;
-    setSearchVisible(!searchVisible);
-    if (toValue === 0) setSearchQuery("");
-    Animated.timing(searchAnim, { toValue, useNativeDriver: false, duration: 250 }).start();
+    const next = !searchVisible;
+    if (next) {
+      setSearchVisible(true);
+      searchProgress.value = 0;
+      searchProgress.value = withTiming(1, { duration: 250 });
+    } else {
+      setSearchQuery("");
+      setSearchVisible(false);
+      searchProgress.value = 0;
+    }
   }
+
+  const searchAnimStyle = useAnimatedStyle(() => ({
+    width: `${searchProgress.value * 100}%` as any,
+  }));
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -280,11 +305,6 @@ export default function DashboardScreen() {
     return true;
   });
 
-  const searchWidth = searchAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0%", "100%"],
-  });
-
   const renderContact = useCallback(
     ({ item }: { item: Contact }) => (
       <EnhancedContactCard
@@ -303,44 +323,56 @@ export default function DashboardScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <LinearGradient
-        colors={["#075E54", "#128C7E"]}
+        colors={[colors.primaryDarkest, colors.primaryDark] as string[]}
         style={[styles.header, { paddingTop: topPad + spacing.sm }]}
       >
         <View style={styles.headerRow}>
           {searchVisible ? (
-            <Animated.View style={[styles.searchExpanded, { width: searchWidth }]}>
-              <Ionicons name="search" size={18} color="rgba(255,255,255,0.7)" />
+            <Animated.View style={[styles.searchExpanded, searchAnimStyle]}>
+              <Ionicons name="search" size={18} color={colors.headerText + "B3"} />
               <TextInput
                 autoFocus
-                style={styles.searchInput}
+                style={[styles.searchInput, { color: colors.headerText }]}
                 placeholder="Search contacts..."
-                placeholderTextColor="rgba(255,255,255,0.5)"
+                placeholderTextColor={colors.headerText + "80"}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
+                accessibilityLabel="Search contacts"
               />
-              <TouchableOpacity onPress={toggleSearch}>
-                <Ionicons name="close" size={18} color="rgba(255,255,255,0.7)" />
+              <TouchableOpacity
+                onPress={toggleSearch}
+                accessibilityLabel="Close search"
+                accessibilityRole="button"
+              >
+                <Ionicons name="close" size={18} color={colors.headerText + "B3"} />
               </TouchableOpacity>
             </Animated.View>
           ) : (
             <>
               <View>
-                <Text style={[typography.caption, { color: "rgba(255,255,255,0.75)" }]}>
+                <Text style={[typography.caption, { color: colors.headerText + "BF" }]}>
                   Welcome back
                 </Text>
-                <Text style={[typography.h3, { color: "#fff" }]}>
+                <Text style={[typography.h3, { color: colors.headerText }]}>
                   {user?.username ?? "WaTracker"}
                 </Text>
               </View>
               <View style={styles.headerIcons}>
-                <TouchableOpacity style={styles.iconBtn} onPress={toggleSearch}>
-                  <Ionicons name="search-outline" size={22} color="#fff" />
+                <TouchableOpacity
+                  style={styles.iconBtn}
+                  onPress={toggleSearch}
+                  accessibilityLabel="Search contacts"
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="search-outline" size={22} color={colors.headerText} />
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.iconBtn, { position: "relative" }]}
                   onPress={() => router.push("/(tabs)/notifications")}
+                  accessibilityLabel={`Notifications, ${unreadCount} unread`}
+                  accessibilityRole="button"
                 >
-                  <Ionicons name="notifications-outline" size={22} color="#fff" />
+                  <Ionicons name="notifications-outline" size={22} color={colors.headerText} />
                   {unreadCount > 0 && (
                     <View style={[styles.notifBadge, { backgroundColor: colors.danger }]}>
                       <BadgeCount count={unreadCount} />
@@ -350,8 +382,10 @@ export default function DashboardScreen() {
                 <TouchableOpacity
                   style={styles.iconBtn}
                   onPress={() => router.push("/family-dashboard")}
+                  accessibilityLabel="Family dashboard"
+                  accessibilityRole="button"
                 >
-                  <Ionicons name="people-outline" size={22} color="#fff" />
+                  <Ionicons name="people-outline" size={22} color={colors.headerText} />
                 </TouchableOpacity>
               </View>
             </>
@@ -360,18 +394,18 @@ export default function DashboardScreen() {
 
         <View style={styles.statsRow}>
           <View style={styles.miniStat}>
-            <Text style={[typography.h2, { color: "#fff" }]}>{contacts.length}</Text>
-            <Text style={[typography.small, { color: "rgba(255,255,255,0.75)" }]}>Tracked</Text>
+            <Text style={[typography.h2, { color: colors.headerText }]}>{contacts.length}</Text>
+            <Text style={[typography.small, { color: colors.headerText + "BF" }]}>Tracked</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.miniStat}>
-            <Text style={[typography.h2, { color: "#fff" }]}>{onlineContacts.length}</Text>
-            <Text style={[typography.small, { color: "rgba(255,255,255,0.75)" }]}>Online Now</Text>
+            <Text style={[typography.h2, { color: colors.headerText }]}>{onlineContacts.length}</Text>
+            <Text style={[typography.small, { color: colors.headerText + "BF" }]}>Online Now</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.miniStat}>
-            <Text style={[typography.h2, { color: "#fff" }]}>{unreadCount}</Text>
-            <Text style={[typography.small, { color: "rgba(255,255,255,0.75)" }]}>Alerts</Text>
+            <Text style={[typography.h2, { color: colors.headerText }]}>{unreadCount}</Text>
+            <Text style={[typography.small, { color: colors.headerText + "BF" }]}>Alerts</Text>
           </View>
         </View>
       </LinearGradient>
@@ -392,12 +426,18 @@ export default function DashboardScreen() {
                 borderColor: filter === f.key ? colors.primary : colors.border,
               },
             ]}
-            onPress={() => setFilter(f.key)}
+            onPress={() => {
+              Haptics.selectionAsync();
+              setFilter(f.key);
+            }}
+            accessibilityLabel={`Filter by ${f.label}`}
+            accessibilityRole="button"
+            accessibilityState={{ selected: filter === f.key }}
           >
             <Text
               style={[
                 typography.caption,
-                { color: filter === f.key ? "#fff" : colors.secondaryText },
+                { color: filter === f.key ? colors.headerText : colors.secondaryText },
               ]}
             >
               {f.label}
@@ -417,6 +457,8 @@ export default function DashboardScreen() {
             key={a.label}
             style={[styles.quickPill, { backgroundColor: colors.card, borderColor: colors.border }]}
             onPress={() => router.push(a.route as any)}
+            accessibilityLabel={a.label}
+            accessibilityRole="button"
           >
             <Ionicons name={a.icon} size={15} color={colors.primary} />
             <Text style={[typography.caption, { color: colors.text }]}>{a.label}</Text>
@@ -456,14 +498,16 @@ export default function DashboardScreen() {
       />
 
       <TouchableOpacity
-        style={[styles.fab, { backgroundColor: colors.primary, bottom: (Platform.OS === "web" ? 80 : insets.bottom + 80) }]}
+        style={[styles.fab, { backgroundColor: colors.primary, bottom: (Platform.OS === "web" ? 80 : insets.bottom + 80), shadowColor: colors.shadow }]}
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           setAddSheetVisible(true);
         }}
         activeOpacity={0.85}
+        accessibilityLabel="Add new contact"
+        accessibilityRole="button"
       >
-        <Ionicons name="add" size={28} color="#fff" />
+        <Ionicons name="add" size={28} color={colors.headerText} />
       </TouchableOpacity>
 
       <AddContactSheet visible={addSheetVisible} onClose={() => setAddSheetVisible(false)} />
@@ -492,15 +536,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-    flex: 1,
     backgroundColor: "rgba(255,255,255,0.15)",
     borderRadius: 20,
     paddingHorizontal: spacing.base,
     paddingVertical: 8,
+    overflow: "hidden",
   },
   searchInput: {
     flex: 1,
-    color: "#fff",
     fontSize: 15,
     fontFamily: "Inter_400Regular",
     paddingVertical: 2,
@@ -549,7 +592,6 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -603,7 +645,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   sheetBtnText: {
-    color: "#fff",
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",
   },

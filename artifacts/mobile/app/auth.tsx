@@ -95,16 +95,16 @@ export default function AuthScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <LinearGradient
-        colors={["#075E54", "#128C7E"]}
+        colors={[colors.primaryDarkest, colors.primaryDark] as string[]}
         style={[styles.gradient, { height: gradientHeight, paddingTop: Platform.OS === "web" ? 67 : insets.top + 16 }]}
       >
-        <View style={styles.logoCircle}>
-          <Ionicons name="phone-portrait" size={36} color="#075E54" />
+        <View style={[styles.logoCircle, { backgroundColor: colors.surface }]}>
+          <Ionicons name="phone-portrait" size={36} color={colors.primaryDarkest} />
         </View>
-        <Text style={[typography.h2, { color: "#fff", marginTop: spacing.sm, textAlign: "center" }]}>
+        <Text style={[typography.h2, { color: colors.headerText, marginTop: spacing.sm, textAlign: "center" }]}>
           WaTracker Pro
         </Text>
-        <Text style={[typography.caption, { color: "rgba(255,255,255,0.75)", textAlign: "center" }]}>
+        <Text style={[typography.caption, { color: colors.headerText + "BF", textAlign: "center" }]}>
           WhatsApp Activity Monitor
         </Text>
       </LinearGradient>
@@ -131,7 +131,7 @@ export default function AuthScreen() {
               <Text
                 style={[
                   typography.bodyMedium,
-                  { color: mode === m ? "#fff" : colors.secondaryText },
+                  { color: mode === m ? colors.headerText : colors.secondaryText },
                 ]}
               >
                 {m === "login" ? "Sign In" : "Create Account"}
@@ -276,9 +276,9 @@ export default function AuthScreen() {
           activeOpacity={0.85}
         >
           {loading ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={colors.headerText} />
           ) : (
-            <Text style={styles.submitText}>{mode === "login" ? "Sign In" : "Create Account"}</Text>
+            <Text style={[styles.submitText, { color: colors.headerText }]}>{mode === "login" ? "Sign In" : "Create Account"}</Text>
           )}
         </TouchableOpacity>
       </ScrollView>
@@ -297,7 +297,6 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 18,
-    backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -374,7 +373,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   submitText: {
-    color: "#fff",
     fontSize: 16,
     fontFamily: "Inter_600SemiBold",
   },

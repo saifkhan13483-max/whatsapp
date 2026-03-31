@@ -10,6 +10,7 @@ import { useColors } from "@/hooks/useColors";
 import { useNotifications } from "@/hooks/useNotifications";
 
 function UnreadBadge({ count }: { count: number }) {
+  const colors = useColors();
   if (count <= 0) return null;
   return (
     <View
@@ -17,7 +18,7 @@ function UnreadBadge({ count }: { count: number }) {
         position: "absolute",
         top: -4,
         right: -8,
-        backgroundColor: "#FF3B30",
+        backgroundColor: colors.danger,
         borderRadius: 999,
         minWidth: 16,
         height: 16,
@@ -26,7 +27,7 @@ function UnreadBadge({ count }: { count: number }) {
         paddingHorizontal: 4,
       }}
     >
-      <Text style={{ color: "#fff", fontSize: 10, fontFamily: "Inter_700Bold", lineHeight: 13 }}>
+      <Text style={{ color: colors.headerText, fontSize: 10, fontFamily: "Inter_700Bold", lineHeight: 13 }}>
         {count > 99 ? "99+" : String(count)}
       </Text>
     </View>

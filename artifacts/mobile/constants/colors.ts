@@ -6,6 +6,7 @@ const palette = {
   darkestGreen: "#075E54",
   blueAccent: "#34B7F1",
   purpleAccent: "#7C4DFF",
+  eveningOrange: "#FF9500",
 
   lightBackground: "#f0f2f5",
   darkBackground: "#0b141a",
@@ -51,6 +52,7 @@ const lightColors = {
   primaryDarkest: palette.darkestGreen,
   blue: palette.blueAccent,
   purple: palette.purpleAccent,
+  evening: palette.eveningOrange,
 
   online: palette.online,
   offline: palette.offline,
@@ -88,6 +90,7 @@ const darkColors = {
   primaryDarkest: palette.darkestGreen,
   blue: palette.blueAccent,
   purple: palette.purpleAccent,
+  evening: palette.eveningOrange,
 
   online: palette.online,
   offline: palette.offline,

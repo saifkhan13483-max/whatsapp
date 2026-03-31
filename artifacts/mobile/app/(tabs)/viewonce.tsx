@@ -77,7 +77,7 @@ export default function ViewOnceScreen() {
                 </Text>
               </View>
               <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]}>
-                <Ionicons name="download-outline" size={18} color="#fff" />
+                <Ionicons name="download-outline" size={18} color={colors.headerText} />
               </TouchableOpacity>
             </TouchableOpacity>
           )}

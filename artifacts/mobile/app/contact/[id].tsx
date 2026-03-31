@@ -8,12 +8,18 @@ import {
   Alert,
   Platform,
   TextInput,
-  Animated,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { format, parseISO, isToday, isYesterday } from "date-fns";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSequence,
+  withTiming,
+  withDelay,
+} from "react-native-reanimated";
 
 import { useColors } from "@/hooks/useColors";
 import { useContact, useDeleteContact, useUpdateContact, useToggleFavorite } from "@/hooks/useContacts";
@@ -55,7 +61,7 @@ function groupSessionsByDate(sessions: Session[]): { title: string; data: Sessio
     });
 }
 
-function SessionRow({ session, colors }: { session: Session; colors: any }) {
+const SessionRow = React.memo(function SessionRow({ session, colors }: { session: Session; colors: any }) {
   const start = format(parseISO(session.startTime), "HH:mm");
   const end = session.endTime ? format(parseISO(session.endTime), "HH:mm") : "—";
   return (
@@ -73,9 +79,9 @@ function SessionRow({ session, colors }: { session: Session; colors: any }) {
       </View>
     </View>
   );
-}
+});
 
-function WeeklyBarChart({ hourly, colors }: { hourly: { hour: number; value: number }[]; colors: any }) {
+const WeeklyBarChart = React.memo(function WeeklyBarChart({ hourly, colors }: { hourly: { hour: number; value: number }[]; colors: any }) {
   const DAYS = ["S", "M", "T", "W", "T", "F", "S"];
   const dayData = DAYS.map((_, dayIdx) => {
     const dayHour = hourly.filter((h) => {
@@ -111,8 +117,8 @@ function WeeklyBarChart({ hourly, colors }: { hourly: { hour: number; value: num
           <View key={i} style={styles.barWrap}>
             <View style={[styles.barContainer, { height: chartH }]}>
               <View style={{ flex: 1, justifyContent: "flex-end" }}>
-                <View style={{ height: nightH, backgroundColor: "#7C4DFF", borderRadius: 2 }} />
-                <View style={{ height: evH, backgroundColor: "#FF9500", borderRadius: 2 }} />
+                <View style={{ height: nightH, backgroundColor: colors.purple, borderRadius: 2 }} />
+                <View style={{ height: evH, backgroundColor: colors.evening, borderRadius: 2 }} />
                 <View style={{ height: dayH, backgroundColor: colors.primary, borderRadius: 2 }} />
               </View>
             </View>
@@ -122,7 +128,7 @@ function WeeklyBarChart({ hourly, colors }: { hourly: { hour: number; value: num
       })}
     </View>
   );
-}
+});
 
 export default function ContactDetailScreen() {
   const colors = useColors();
@@ -137,7 +143,11 @@ export default function ContactDetailScreen() {
   const [notes, setNotes] = useState("");
   const [noteSaved, setNoteSaved] = useState(false);
   const noteTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveAnim = useRef(new Animated.Value(0)).current;
+
+  const saveOpacity = useSharedValue(0);
+  const saveAnimStyle = useAnimatedStyle(() => ({
+    opacity: saveOpacity.value,
+  }));
 
   const { data: contact, isLoading: loadingContact } = useContact(contactId);
   const { data: stats } = useContactStats(contactId, range);
@@ -169,11 +179,10 @@ export default function ContactDetailScreen() {
     noteTimeout.current = setTimeout(() => {
       updateContact.mutate({ id: contactId, notes: text });
       setNoteSaved(true);
-      Animated.sequence([
-        Animated.timing(saveAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
-        Animated.delay(1500),
-        Animated.timing(saveAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
-      ]).start(() => setNoteSaved(false));
+      saveOpacity.value = withSequence(
+        withTiming(1, { duration: 200 }),
+        withDelay(1500, withTiming(0, { duration: 300 }))
+      );
     }, 1000);
   }
 
@@ -242,20 +251,35 @@ export default function ContactDetailScreen() {
           },
         ]}
       >
-        <TouchableOpacity onPress={() => router.back()} style={styles.navBtn}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.navBtn}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+        >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[typography.h3, { color: colors.text, flex: 1, textAlign: "center" }]} numberOfLines={1}>
           {contact.name}
         </Text>
-        <TouchableOpacity onPress={handleFavoriteToggle} style={styles.navBtn}>
+        <TouchableOpacity
+          onPress={handleFavoriteToggle}
+          style={styles.navBtn}
+          accessibilityLabel={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          accessibilityRole="button"
+        >
           <Ionicons
             name={isFavorite ? "star" : "star-outline"}
             size={22}
             color={isFavorite ? colors.warning : colors.muted}
           />
         </TouchableOpacity>
-        <TouchableOpacity onPress={handleDelete} style={styles.navBtn}>
+        <TouchableOpacity
+          onPress={handleDelete}
+          style={styles.navBtn}
+          accessibilityLabel="Delete contact"
+          accessibilityRole="button"
+        >
           <Ionicons name="trash-outline" size={20} color={colors.danger} />
         </TouchableOpacity>
       </View>
@@ -315,8 +339,11 @@ export default function ContactDetailScreen() {
                 },
               ]}
               onPress={() => setRangeIdx(i)}
+              accessibilityLabel={`View ${label} data`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: rangeIdx === i }}
             >
-              <Text style={[typography.caption, { color: rangeIdx === i ? "#fff" : colors.secondaryText }]}>
+              <Text style={[typography.caption, { color: rangeIdx === i ? colors.headerText : colors.secondaryText }]}>
                 {label}
               </Text>
             </TouchableOpacity>
@@ -386,8 +413,8 @@ export default function ContactDetailScreen() {
             <View style={styles.legend}>
               {[
                 { color: colors.primary, label: "Day" },
-                { color: "#FF9500", label: "Evening" },
-                { color: "#7C4DFF", label: "Night" },
+                { color: colors.evening, label: "Evening" },
+                { color: colors.purple, label: "Night" },
               ].map((l) => (
                 <View key={l.label} style={styles.legendItem}>
                   <View style={[styles.legendDot, { backgroundColor: l.color }]} />
@@ -448,7 +475,7 @@ export default function ContactDetailScreen() {
         <View style={styles.section}>
           <View style={styles.sectionTitleRow}>
             <Text style={[typography.labelBold, { color: colors.text }]}>Notes</Text>
-            <Animated.View style={{ opacity: saveAnim }}>
+            <Animated.View style={saveAnimStyle}>
               <View style={styles.savedBadge}>
                 <Ionicons name="checkmark" size={12} color={colors.online} />
                 <Text style={[styles.savedText, { color: colors.online }]}>Saved</Text>
@@ -466,6 +493,7 @@ export default function ContactDetailScreen() {
             value={notes}
             onChangeText={handleNotesChange}
             textAlignVertical="top"
+            accessibilityLabel="Contact notes"
           />
         </View>
 
@@ -473,13 +501,17 @@ export default function ContactDetailScreen() {
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: colors.primary }]}
             onPress={() => router.push(`/reports?contactId=${contactId}`)}
+            accessibilityLabel="View full report"
+            accessibilityRole="button"
           >
-            <Ionicons name="bar-chart" size={18} color="#fff" />
-            <Text style={[typography.bodyMedium, { color: "#fff" }]}>View Full Report</Text>
+            <Ionicons name="bar-chart" size={18} color={colors.headerText} />
+            <Text style={[typography.bodyMedium, { color: colors.headerText }]}>View Full Report</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionBtn, { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1 }]}
             onPress={() => router.push(`/chat/${contactId}`)}
+            accessibilityLabel="View chat history"
+            accessibilityRole="button"
           >
             <Ionicons name="chatbubbles-outline" size={18} color={colors.primary} />
             <Text style={[typography.bodyMedium, { color: colors.primary }]}>View Chat</Text>

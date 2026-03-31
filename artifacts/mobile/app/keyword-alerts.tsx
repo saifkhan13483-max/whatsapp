@@ -31,11 +31,11 @@ import type { Severity } from "@/components/ui/KeywordBadge";
 
 const SEVERITIES: Severity[] = ["low", "medium", "high"];
 
-const SEV_COLORS: Record<Severity, string> = {
-  low: "#4CAF50",
-  medium: "#FFC107",
-  high: "#FF3B30",
-};
+function getSevColor(severity: Severity, colors: { danger: string; success: string; warning: string }): string {
+  if (severity === "high") return colors.danger;
+  if (severity === "low") return colors.success;
+  return colors.warning;
+}
 
 const PREDEFINED_CATEGORIES = [
   {
@@ -128,9 +128,9 @@ const KeywordRow = React.memo(function KeywordRow({
         <KeywordBadge keyword={keyword} severity={severity} />
       </View>
       {matchCount !== undefined && matchCount > 0 && (
-        <View style={[styles.matchCountBadge, { backgroundColor: SEV_COLORS[severity] + "22", borderColor: SEV_COLORS[severity] + "55" }]}>
-          <Ionicons name="notifications-outline" size={11} color={SEV_COLORS[severity]} />
-          <Text style={[styles.matchCountText, { color: SEV_COLORS[severity] }]}>
+        <View style={[styles.matchCountBadge, { backgroundColor: getSevColor(severity, colors) + "22", borderColor: getSevColor(severity, colors) + "55" }]}>
+          <Ionicons name="notifications-outline" size={11} color={getSevColor(severity, colors)} />
+          <Text style={[styles.matchCountText, { color: getSevColor(severity, colors) }]}>
             {matchCount} {matchCount === 1 ? "hit" : "hits"}
           </Text>
         </View>
@@ -245,14 +245,14 @@ const RecentMatchRow = React.memo(function RecentMatchRow({ item, onPress }: Rec
       accessibilityLabel={`Keyword match: ${item.title}`}
       accessibilityRole="button"
     >
-      <View style={[styles.matchIconWrap, { backgroundColor: "#FF980022" }]}>
-        <Ionicons name="search" size={16} color="#FF9800" />
+      <View style={[styles.matchIconWrap, { backgroundColor: colors.evening + "22" }]}>
+        <Ionicons name="search" size={16} color={colors.evening} />
       </View>
       <View style={{ flex: 1, gap: 3 }}>
         <View style={styles.matchTitleRow}>
           {keywordFromBody && (
-            <View style={[styles.matchKeywordChip, { backgroundColor: "#FF980018", borderColor: "#FF980044" }]}>
-              <Text style={[styles.matchKeywordText, { color: "#FF9800" }]}>{keywordFromBody}</Text>
+            <View style={[styles.matchKeywordChip, { backgroundColor: colors.evening + "18", borderColor: colors.evening + "44" }]}>
+              <Text style={[styles.matchKeywordText, { color: colors.evening }]}>{keywordFromBody}</Text>
             </View>
           )}
           {item.contactName && (
@@ -472,7 +472,7 @@ export default function KeywordAlertsScreen() {
               key={s}
               style={[
                 styles.sevChip,
-                { backgroundColor: severity === s ? SEV_COLORS[s] : "transparent", borderColor: SEV_COLORS[s] },
+                { backgroundColor: severity === s ? getSevColor(s, colors) : "transparent", borderColor: getSevColor(s, colors) },
               ]}
               onPress={async () => {
                 await Haptics.selectionAsync();
@@ -482,7 +482,7 @@ export default function KeywordAlertsScreen() {
               accessibilityLabel={`${s} severity`}
               accessibilityState={{ checked: severity === s }}
             >
-              <Text style={{ color: severity === s ? colors.headerText : SEV_COLORS[s], fontFamily: "Inter_600SemiBold", fontSize: 11 }}>
+              <Text style={{ color: severity === s ? colors.headerText : getSevColor(s, colors), fontFamily: "Inter_600SemiBold", fontSize: 11 }}>
                 {s.toUpperCase()}
               </Text>
             </TouchableOpacity>

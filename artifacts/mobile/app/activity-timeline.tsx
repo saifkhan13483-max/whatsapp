@@ -77,6 +77,7 @@ interface ContactTrackProps {
 }
 
 const ContactTrack = React.memo(function ContactTrack({ name, sessions, color, isFiltered }: ContactTrackProps) {
+  const colors = useColors();
   if (isFiltered) return null;
   return (
     <View style={{ width: TRACK_WIDTH, position: "relative" }}>
@@ -100,7 +101,7 @@ const ContactTrack = React.memo(function ContactTrack({ name, sessions, color, i
             accessibilityLabel={`${name} online for ${s.durationMins} minutes starting at ${s.startHour}:${String(s.startMin).padStart(2, "0")}`}
           >
             {barHeight > 20 && (
-              <Text style={styles.barLabel} numberOfLines={1}>
+              <Text style={[styles.barLabel, { color: colors.headerText }]} numberOfLines={1}>
                 {name}
               </Text>
             )}
@@ -406,7 +407,6 @@ const styles = StyleSheet.create({
   },
   hourLabel: { fontSize: 10, fontFamily: "Inter_400Regular" },
   barLabel: {
-    color: "#fff",
     fontSize: 9,
     fontFamily: "Inter_600SemiBold",
     paddingHorizontal: 3,

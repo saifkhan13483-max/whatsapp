@@ -6,7 +6,6 @@ import {
   Dimensions,
   TouchableOpacity,
   FlatList,
-  Animated,
 } from "react-native";
 import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -21,45 +20,44 @@ import { spacing } from "@/constants/spacing";
 
 const { width } = Dimensions.get("window");
 
-const SLIDES = [
-  {
-    icon: "shield-checkmark" as const,
-    color: "#25D366",
-    title: "Track Any Contact",
-    description: "Monitor WhatsApp activity in real-time with zero setup. See when your contacts come online and offline.",
-  },
-  {
-    icon: "notifications" as const,
-    color: "#34B7F1",
-    title: "Smart Alerts",
-    description: "Get instant notifications for late-night activity, long sessions, and keywords you care about.",
-  },
-  {
-    icon: "bar-chart" as const,
-    color: "#FF9500",
-    title: "Detailed Reports",
-    description: "Visual charts, heatmaps, and exportable CSV reports to understand activity patterns at a glance.",
-  },
-  {
-    icon: "people" as const,
-    color: "#AF52DE",
-    title: "Family Dashboard",
-    description: "Monitor your entire family from one unified view. Keep your loved ones safe online.",
-  },
-  {
-    icon: "lock-closed" as const,
-    color: "#FF3B30",
-    title: "Privacy First",
-    description: "Biometric lock, encrypted data, and full control over your information. Your privacy is protected.",
-  },
-];
-
 export default function OnboardingScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const flatRef = useRef<FlatList>(null);
-  const scrollX = useRef(new Animated.Value(0)).current;
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  const SLIDES = [
+    {
+      icon: "shield-checkmark" as const,
+      color: colors.primary,
+      title: "Track Any Contact",
+      description: "Monitor WhatsApp activity in real-time with zero setup. See when your contacts come online and offline.",
+    },
+    {
+      icon: "notifications" as const,
+      color: colors.blue,
+      title: "Smart Alerts",
+      description: "Get instant notifications for late-night activity, long sessions, and keywords you care about.",
+    },
+    {
+      icon: "bar-chart" as const,
+      color: colors.evening,
+      title: "Detailed Reports",
+      description: "Visual charts, heatmaps, and exportable CSV reports to understand activity patterns at a glance.",
+    },
+    {
+      icon: "people" as const,
+      color: colors.purple,
+      title: "Family Dashboard",
+      description: "Monitor your entire family from one unified view. Keep your loved ones safe online.",
+    },
+    {
+      icon: "lock-closed" as const,
+      color: colors.danger,
+      title: "Privacy First",
+      description: "Biometric lock, encrypted data, and full control over your information. Your privacy is protected.",
+    },
+  ];
 
   function goNext() {
     Haptics.selectionAsync();
@@ -83,6 +81,8 @@ export default function OnboardingScreen() {
         style={[styles.skipBtn, { top: insets.top + 16 }]}
         onPress={finish}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        accessibilityLabel="Skip onboarding"
+        accessibilityRole="button"
       >
         <Text style={[typography.bodyMedium, { color: colors.secondaryText }]}>Skip</Text>
       </TouchableOpacity>
@@ -95,14 +95,10 @@ export default function OnboardingScreen() {
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         scrollEnabled={false}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-          { useNativeDriver: false }
-        )}
         renderItem={({ item }) => (
           <View style={[styles.slide, { width }]}>
             <LinearGradient
-              colors={[item.color + "22", "transparent"]}
+              colors={[item.color + "22", "transparent"] as string[]}
               style={styles.iconWrap}
             >
               <Ionicons name={item.icon} size={80} color={item.color} />
@@ -135,14 +131,16 @@ export default function OnboardingScreen() {
           style={[styles.btn, { backgroundColor: colors.primary }]}
           onPress={goNext}
           activeOpacity={0.85}
+          accessibilityLabel={currentIndex === SLIDES.length - 1 ? "Get started" : "Next slide"}
+          accessibilityRole="button"
         >
-          <Text style={styles.btnText}>
+          <Text style={[styles.btnText, { color: colors.headerText }]}>
             {currentIndex === SLIDES.length - 1 ? "Get Started" : "Next"}
           </Text>
           <Ionicons
             name={currentIndex === SLIDES.length - 1 ? "checkmark" : "arrow-forward"}
             size={18}
-            color="#fff"
+            color={colors.headerText}
           />
         </TouchableOpacity>
       </View>
@@ -207,7 +205,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   btnText: {
-    color: "#fff",
     fontSize: 16,
     fontFamily: "Inter_600SemiBold",
   },

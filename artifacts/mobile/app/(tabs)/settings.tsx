@@ -81,24 +81,24 @@ export default function SettingsScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       <LinearGradient
-        colors={["#075E54", "#128C7E"]}
+        colors={[colors.primaryDarkest, colors.primaryDark] as string[]}
         style={[styles.header, { paddingTop: topPad + spacing.sm }]}
       >
-        <View style={styles.avatar}>
-          <Ionicons name="person" size={36} color="#075E54" />
+        <View style={[styles.avatar, { backgroundColor: colors.surface }]}>
+          <Ionicons name="person" size={36} color={colors.primaryDarkest} />
         </View>
-        <Text style={[typography.h3, { color: "#fff", marginTop: spacing.sm }]}>
+        <Text style={[typography.h3, { color: colors.headerText, marginTop: spacing.sm }]}>
           {user?.username ?? "Guest"}
         </Text>
-        <Text style={[typography.caption, { color: "rgba(255,255,255,0.75)" }]}>
+        <Text style={[typography.caption, { color: colors.headerText + "BF" }]}>
           {user?.email ?? "Not logged in"}
         </Text>
         {!user && (
           <TouchableOpacity
-            style={[styles.loginBtn]}
+            style={[styles.loginBtn, { backgroundColor: colors.surface }]}
             onPress={() => router.push("/auth")}
           >
-            <Text style={{ color: "#075E54", fontFamily: "Inter_600SemiBold", fontSize: 15 }}>
+            <Text style={{ color: colors.primaryDarkest, fontFamily: "Inter_600SemiBold", fontSize: 15 }}>
               Sign In
             </Text>
           </TouchableOpacity>
@@ -240,13 +240,11 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
   },
   loginBtn: {
     marginTop: spacing.md,
-    backgroundColor: "#fff",
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.sm,
     borderRadius: 8,

@@ -97,13 +97,13 @@ export default function ChatViewScreen() {
                     },
                   ]}
                 >
-                  <Text style={[typography.body, { color: isSent ? "#fff" : colors.text }]}>
+                  <Text style={[typography.body, { color: isSent ? colors.headerText : colors.text }]}>
                     {item.content}
                   </Text>
                   <Text
                     style={[
                       typography.small,
-                      { color: isSent ? "rgba(255,255,255,0.7)" : colors.secondaryText, alignSelf: "flex-end" },
+                      { color: isSent ? colors.headerText + "B3" : colors.secondaryText, alignSelf: "flex-end" },
                     ]}
                   >
                     {formatRelativeTime(item.timestamp)}
