@@ -171,10 +171,10 @@ export type KeywordAlert = typeof keywordAlertsTable.$inferSelect;
 export const whatsappSessionsTable = pgTable("whatsapp_sessions", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }).unique(),
-  phoneNumber: varchar("phone_number", { length: 20 }),
-  maskedPhone: varchar("masked_phone", { length: 25 }),
+  phoneNumber: text("phone_number"),
+  maskedPhone: varchar("masked_phone", { length: 30 }),
   status: varchar("status", { length: 20 }).default("pending_pairing").notNull(),
-  pairingCode: varchar("pairing_code", { length: 10 }),
+  pairingCode: varchar("pairing_code", { length: 20 }),
   pairingCodeExpiresAt: timestamp("pairing_code_expires_at"),
   sessionData: text("session_data"),
   connectedAt: timestamp("connected_at"),
