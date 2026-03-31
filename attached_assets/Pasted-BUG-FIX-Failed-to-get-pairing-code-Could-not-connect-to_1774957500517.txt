@@ -1,0 +1,406 @@
+BUG FIX: "Failed to get pairing code — Could not connect to WhatsApp"
+Target: WaTracker Pro v2.0 — WhatsApp Pairing Code Connection Feature
+
+═══════════════════════════════════════════════════════════════════
+PROBLEM ANALYSIS
+═══════════════════════════════════════════════════════════════════
+
+The error "Failed to get pairing code / Could not connect to WhatsApp"
+is shown on the frontend when POST /api/whatsapp/request-pairing-code fails.
+
+This is caused by one or more of the following ROOT CAUSES on the backend:
+
+ROOT CAUSE 1 — TIMING BUG (Most Common):
+  sock.requestPairingCode() is being called IMMEDIATELY after makeWASocket(),
+  before the socket has had time to connect to WhatsApp servers and emit
+  either a 'qr' or 'connecting' event.
+  Calling requestPairingCode() too early causes a 428 "Precondition Required"
+  or "Connection Closed" error from WhatsApp servers.
+
+  FIX: requestPairingCode() MUST be called INSIDE the 'connection.update'
+  event listener, only after (connection === 'connecting') OR (!!qr) is true.
+  NEVER call it immediately after makeWASocket() returns.
+
+ROOT CAUSE 2 — PHONE NUMBER FORMAT:
+  The phone number is passed with special characters (+, spaces, dashes,
+  parentheses) or with the leading + sign.
+  Baileys requires the phone number in pure digits only, no plus sign.
+  Example: "+92 300 1234567" MUST become "923001234567" before passing
+  to requestPairingCode().
+
+  FIX: Always strip ALL non-digit characters from the phone number
+  before calling requestPairingCode():
+    const cleanNumber = phoneNumber.replace(/\D/g, '')
+
+ROOT CAUSE 3 — printQRInTerminal NOT SET TO FALSE:
+  If makeWASocket is called without printQRInTerminal: false, the socket
+  may behave differently and interfere with the pairing code flow.
+
+  FIX: Always set printQRInTerminal: false in makeWASocket config
+  when using pairing code method.
+
+ROOT CAUSE 4 — SESSION REUSE WITHOUT CLEANUP:
+  If a previous broken/partial session exists in the database or memory
+  for this user, and it is reused without being cleared, WhatsApp rejects
+  the new pairing code request because creds.registered may be stale true.
+
+  FIX: Before creating a new socket for a fresh pairing code request,
+  destroy any existing socket for this user and clear their stored
+  sessionData in the database.
+
+ROOT CAUSE 5 — MISSING ERROR PROPAGATION:
+  The backend catches the Baileys error but sends a generic 500 response
+  without the actual cause, making debugging impossible and showing the
+  user a vague "Could not connect" message.
+
+  FIX: Parse the Baileys/Boom error statusCode and map it to a
+  human-readable message before returning the response.
+
+ROOT CAUSE 6 — SOCKET DESTROYED BEFORE CODE IS RETURNED:
+  The Promise resolving requestPairingCode() returns the code, but if the
+  socket emits a 'connection.update' with connection === 'close' before
+  the HTTP response is sent, the code is lost.
+
+  FIX: Wrap the entire flow in a Promise that resolves on code received
+  and rejects on connection close, with a timeout of 30 seconds.
+
+═══════════════════════════════════════════════════════════════════
+WHAT TO FIX — BACKEND (server, port 3001)
+═══════════════════════════════════════════════════════════════════
+
+Find the file that handles POST /api/whatsapp/request-pairing-code.
+Replace the entire implementation with the following correct pattern:
+
+────────────────────────────────
+CORRECT requestPairingCode IMPLEMENTATION PATTERN:
+────────────────────────────────
+
+```typescript
+import makeWASocket, {
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+} from '@whiskeysockets/baileys'
+import { Boom } from '@hapi/boom'
+
+// In your SessionManager or route handler:
+
+async function requestPairingCodeForUser(
+  userId: number,
+  rawPhoneNumber: string
+): Promise<{ pairingCode: string; expiresAt: string }> {
+
+  // STEP 1: Sanitize phone number — digits only, no +, no spaces, no dashes
+  const phoneNumber = rawPhoneNumber.replace(/\D/g, '')
+
+  if (!phoneNumber || phoneNumber.length < 7) {
+    throw new Error('INVALID_PHONE_NUMBER')
+  }
+
+  // STEP 2: Destroy any existing socket for this user
+  // to prevent stale session interference
+  const existingSocket = activeSockets.get(userId)
+  if (existingSocket) {
+    try { existingSocket.end(undefined) } catch (_) {}
+    activeSockets.delete(userId)
+  }
+
+  // STEP 3: Clear stored session from DB so creds.registered is fresh
+  await db.update(whatsappSessions)
+    .set({ sessionData: null, status: 'pending_pairing' })
+    .where(eq(whatsappSessions.userId, userId))
+
+  // STEP 4: Get latest Baileys version
+  const { version } = await fetchLatestBaileysVersion()
+
+  // STEP 5: Initialize auth state (load from DB or create fresh)
+  // Use your DB-backed auth state, NOT useMultiFileAuthState
+  const { state, saveCreds } = await getDbAuthState(userId)
+
+  // STEP 6: Create socket with REQUIRED config for pairing code
+  const sock = makeWASocket({
+    version,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
+    },
+    printQRInTerminal: false,  // REQUIRED — must be false for pairing code
+    logger,
+    browser: ['WaTracker Pro', 'Chrome', '120.0.0'],
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: false,
+  })
+
+  // Store socket in memory map
+  activeSockets.set(userId, sock)
+
+  // STEP 7: Save credentials whenever they update
+  sock.ev.on('creds.update', saveCreds)
+
+  // STEP 8: Wrap entire pairing code flow in a Promise with timeout
+  return new Promise((resolve, reject) => {
+
+    const TIMEOUT_MS = 30000  // 30 second timeout
+    let codeRequested = false
+
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error('TIMEOUT'))
+    }, TIMEOUT_MS)
+
+    function cleanup() {
+      clearTimeout(timeout)
+      sock.ev.removeAllListeners('connection.update')
+    }
+
+    // STEP 9: Listen for connection.update BEFORE calling requestPairingCode
+    // requestPairingCode MUST be called inside this event, not before it
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update
+
+      // CRITICAL: Only call requestPairingCode when socket is
+      // in 'connecting' state OR when QR is available
+      // This is the correct timing — NOT immediately after makeWASocket
+      if ((connection === 'connecting' || !!qr) && !codeRequested) {
+        codeRequested = true
+
+        try {
+          const code = await sock.requestPairingCode(phoneNumber)
+
+          if (!code) {
+            cleanup()
+            reject(new Error('EMPTY_CODE'))
+            return
+          }
+
+          // Calculate expiry (WhatsApp pairing codes expire in ~5 minutes)
+          const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString()
+
+          // Persist to DB
+          await db.update(whatsappSessions).set({
+            pairingCode: code,
+            pairingCodeExpiresAt: new Date(expiresAt),
+            status: 'pending_pairing',
+            phoneNumber: phoneNumber,
+            maskedPhone: maskPhoneNumber(phoneNumber),
+          }).where(eq(whatsappSessions.userId, userId))
+
+          cleanup()
+          resolve({ pairingCode: code, expiresAt })
+
+        } catch (err: any) {
+          cleanup()
+          reject(err)
+        }
+      }
+
+      // Handle connection closed before code was issued
+      if (connection === 'close' && !codeRequested) {
+        const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode
+        cleanup()
+        reject(new Error(`CONNECTION_CLOSED_${statusCode ?? 'UNKNOWN'}`))
+      }
+
+      // Handle successful full connection (pairing accepted)
+      if (connection === 'open') {
+        await db.update(whatsappSessions).set({
+          status: 'connected',
+          connectedAt: new Date(),
+        }).where(eq(whatsappSessions.userId, userId))
+      }
+    })
+  })
+}
+──────────────────────────────── CORRECT ROUTE HANDLER PATTERN: ────────────────────────────────
+
+Copy// POST /api/whatsapp/request-pairing-code
+router.post('/whatsapp/request-pairing-code', requireAuth, async (req, res) => {
+  try {
+    const { phoneNumber } = req.body
+    const userId = req.user.id
+
+    if (!phoneNumber) {
+      return res.status(400).json({ error: 'Phone number is required' })
+    }
+
+    const result = await requestPairingCodeForUser(userId, phoneNumber)
+
+    return res.json({
+      pairingCode: result.pairingCode,
+      expiresAt: result.expiresAt,
+    })
+
+  } catch (err: any) {
+    const message = err.message || ''
+
+    // Map internal error codes to user-friendly messages
+    if (message === 'INVALID_PHONE_NUMBER') {
+      return res.status(400).json({
+        error: 'Invalid phone number. Please include your country code.'
+      })
+    }
+    if (message.includes('CONNECTION_CLOSED_401') || message.includes('401')) {
+      return res.status(401).json({
+        error: 'WhatsApp rejected the connection. Please try again.'
+      })
+    }
+    if (message.includes('CONNECTION_CLOSED_428') || message.includes('428')) {
+      return res.status(428).json({
+        error: 'Connection was not ready. Please wait a moment and try again.'
+      })
+    }
+    if (message === 'TIMEOUT') {
+      return res.status(408).json({
+        error: 'Request timed out. Please check your internet connection and try again.'
+      })
+    }
+    if (message === 'EMPTY_CODE') {
+      return res.status(502).json({
+        error: 'WhatsApp returned an empty code. Please try again.'
+      })
+    }
+
+    console.error('[WhatsApp] requestPairingCode error:', err)
+    return res.status(500).json({
+      error: 'Could not connect to WhatsApp. Please try again in a few seconds.'
+    })
+  }
+})
+Copy
+──────────────────────────────── HELPER: maskPhoneNumber ────────────────────────────────
+
+Copyfunction maskPhoneNumber(phone: string): string {
+  // phone is digits only e.g. "923001234567"
+  if (phone.length < 7) return '***'
+  const last4 = phone.slice(-4)
+  const prefix = phone.slice(0, phone.length - 7)
+  return `+${prefix} *** ${last4}`
+}
+═══════════════════════════════════════════════════════════════════ WHAT TO FIX — FRONTEND (React Native / Expo) ═══════════════════════════════════════════════════════════════════
+
+Find the frontend code that calls POST /api/whatsapp/request-pairing-code. Apply ALL of these fixes:
+
+FIX 1 — PHONE NUMBER FORMAT BEFORE SENDING: Before sending phoneNumber in the request body, strip all non-digits AND ensure the country dial code is prepended:
+
+Copy// In useWhatsAppConnection.ts or connect-whatsapp.tsx
+
+const formatPhoneForApi = (dialCode: string, localNumber: string): string => {
+  // dialCode example: "+92" or "92"
+  // localNumber example: "3188055850"
+  const cleanDialCode = dialCode.replace(/\D/g, '')       // "92"
+  const cleanLocal = localNumber.replace(/\D/g, '')       // "3188055850"
+  return `${cleanDialCode}${cleanLocal}`                   // "923188055850"
+}
+
+// Use this when calling the API:
+const phoneNumber = formatPhoneForApi(
+  selectedCountry.dialCode,   // e.g. "+92"
+  localPhoneInput             // e.g. "3188055850"
+)
+FIX 2 — BETTER ERROR MESSAGES ON FRONTEND: In connect-whatsapp.tsx Step 1, replace the generic error toast with specific messages based on the HTTP status code returned:
+
+Copyconst handleGetPairingCode = async () => {
+  try {
+    const result = await requestPairingCode(phoneNumber)
+    // advance to step 2
+    setCurrentStep(2)
+  } catch (error: any) {
+    const status = error?.response?.status ?? error?.status ?? 0
+    const serverMessage = error?.response?.data?.error ?? error?.message ?? ''
+
+    let userMessage = 'Could not connect to WhatsApp. Please try again.'
+
+    if (status === 400) {
+      userMessage = 'Invalid phone number. Please check and try again.'
+    } else if (status === 401) {
+      userMessage = 'WhatsApp rejected the connection. Please try again.'
+    } else if (status === 408) {
+      userMessage = 'Request timed out. Check your internet and retry.'
+    } else if (status === 409) {
+      userMessage = 'WhatsApp is already connected. Go to Settings to manage it.'
+    } else if (status === 428) {
+      userMessage = 'Connection not ready. Wait 5 seconds and try again.'
+    } else if (status === 429) {
+      userMessage = 'Too many attempts. Please wait 10 minutes.'
+    } else if (serverMessage) {
+      userMessage = serverMessage
+    }
+
+    Toast.show({
+      type: 'error',
+      text1: 'Failed to get pairing code',
+      text2: userMessage,
+      visibilityTime: 5000,
+    })
+  }
+}
+Copy
+FIX 3 — ADD RETRY WITH DELAY BUTTON: In connect-whatsapp.tsx Step 1, after a failed attempt, show a "Try Again" button that is disabled for 5 seconds (countdown shown) to prevent rapid re-requests that hammer the WhatsApp server:
+
+Copyconst [retryCountdown, setRetryCountdown] = useState(0)
+
+// After error:
+setRetryCountdown(5)
+const interval = setInterval(() => {
+  setRetryCountdown(prev => {
+    if (prev <= 1) { clearInterval(interval); return 0 }
+    return prev - 1
+  })
+}, 1000)
+
+// Button:
+<TouchableOpacity
+  disabled={retryCountdown > 0 || isRequestingCode}
+  onPress={handleGetPairingCode}
+  style={[styles.button, (retryCountdown > 0) && styles.buttonDisabled]}
+>
+  <Text style={styles.buttonText}>
+    {retryCountdown > 0
+      ? `Try Again in ${retryCountdown}s`
+      : isRequestingCode
+        ? 'Connecting...'
+        : 'Get Pairing Code'}
+  </Text>
+</TouchableOpacity>
+FIX 4 — VALIDATE PHONE NUMBER BEFORE SUBMIT: Add this validation check before making the API call, so the user gets immediate feedback without hitting the server unnecessarily:
+
+Copyconst validatePhone = (dialCode: string, localNumber: string): string | null => {
+  const clean = localNumber.replace(/\D/g, '')
+  if (!clean || clean.length < 6) {
+    return 'Phone number is too short'
+  }
+  if (clean.length > 15) {
+    return 'Phone number is too long'
+  }
+  return null // valid
+}
+
+// Before calling API:
+const validationError = validatePhone(selectedCountry.dialCode, localPhoneInput)
+if (validationError) {
+  setPhoneError(validationError)
+  return
+}
+═══════════════════════════════════════════════════════════════════ IMPLEMENTATION CHECKLIST — DO ALL OF THESE ═══════════════════════════════════════════════════════════════════
+
+Backend: [ ] requestPairingCode() is called INSIDE connection.update event listener [ ] requestPairingCode() is called ONLY when connection === 'connecting' OR !!qr [ ] codeRequested flag prevents calling requestPairingCode() more than once [ ] phoneNumber is stripped of ALL non-digits before passing to requestPairingCode() [ ] printQRInTerminal: false is set in makeWASocket config [ ] Existing socket for user is destroyed before creating a new one [ ] sessionData is cleared from DB before creating new socket [ ] Promise has a 30-second timeout to prevent hanging requests [ ] All error types (TIMEOUT, CONNECTION_CLOSED, EMPTY_CODE, INVALID_PHONE) are caught [ ] Each error maps to a specific HTTP status code + human-readable message [ ] Boom errors from Baileys are caught and their statusCode is extracted
+
+Frontend: [ ] Phone number is formatted as digits-only (dialCode + localNumber, no + or spaces) [ ] formatPhoneForApi() is used before every API call [ ] Client-side phone validation runs BEFORE API call [ ] Error messages are shown based on HTTP status code, not just generic fallback [ ] Retry button is disabled for 5 seconds after a failed attempt [ ] Toast shows for 5000ms (not default 3000ms) so user can read the error
+
+═══════════════════════════════════════════════════════════════════ TESTING STEPS AFTER FIX ═══════════════════════════════════════════════════════════════════
+
+Enter phone number "+92 318 8055850" (with spaces and + sign) → Should still work (frontend strips it to "923188055850")
+
+Enter a too-short phone number e.g. "123" → Should show inline validation error immediately, no API call made
+
+Enter valid phone number, tap "Get Pairing Code" → Should show loading for 2-10 seconds → Should advance to Step 2 with 8-character code displayed → Console log on backend should show the code was generated successfully
+
+Tap "Get Pairing Code" again rapidly (before countdown ends) → Button should be disabled for 5 seconds after each attempt
+
+Disconnect internet, tap "Get Pairing Code" → Should show "Could not connect to WhatsApp. Please try again." after timeout
+
+Fix internet, tap "Get Pairing Code" → Should work correctly
+
+Do NOT mark this task complete until test step 3 succeeds end-to-end (code is displayed AND can be entered into real WhatsApp app successfully).
+
+Copy

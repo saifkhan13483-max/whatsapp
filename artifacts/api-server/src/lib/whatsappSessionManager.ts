@@ -1,6 +1,7 @@
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
+  fetchLatestBaileysVersion,
   type WASocket,
   type AuthenticationState,
 } from "@whiskeysockets/baileys";
@@ -61,6 +62,7 @@ const rateLimitMap = new Map<number, { count: number; windowStart: number }>();
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const PAIRING_CODE_TTL_MS = 5 * 60 * 1000;
+const PAIRING_REQUEST_TIMEOUT_MS = 30_000;
 
 function checkRateLimit(userId: number): boolean {
   const now = Date.now();
@@ -93,30 +95,62 @@ async function destroySocket(userId: number) {
   }
 }
 
-export async function requestPairingCode(userId: number, phoneNumber: string): Promise<{ pairingCode: string; expiresAt: string }> {
+function makeApiError(message: string, statusCode: number): Error {
+  const err = new Error(message);
+  (err as any).statusCode = statusCode;
+  return err;
+}
+
+export async function requestPairingCode(
+  userId: number,
+  phoneNumber: string
+): Promise<{ pairingCode: string; expiresAt: string }> {
   if (!checkRateLimit(userId)) {
-    const err = new Error("Too many attempts. Please wait 10 minutes and try again.");
-    (err as any).statusCode = 429;
-    throw err;
+    throw makeApiError("Too many attempts. Please wait 10 minutes and try again.", 429);
   }
 
-  const existingSession = await db.select().from(whatsappSessionsTable).where(eq(whatsappSessionsTable.userId, userId)).limit(1);
+  const existingSession = await db
+    .select()
+    .from(whatsappSessionsTable)
+    .where(eq(whatsappSessionsTable.userId, userId))
+    .limit(1);
+
   if (existingSession.length > 0 && existingSession[0].status === "connected") {
-    const err = new Error("WhatsApp is already linked for this account.");
-    (err as any).statusCode = 409;
-    throw err;
+    throw makeApiError("WhatsApp is already linked for this account.", 409);
   }
 
+  // ROOT CAUSE 2: Strip ALL non-digit characters — Baileys requires pure digits only
+  const cleanPhone = phoneNumber.replace(/\D/g, "");
+  if (!cleanPhone || cleanPhone.length < 7) {
+    throw makeApiError("Invalid phone number. Please include your country code.", 400);
+  }
+
+  // ROOT CAUSE 1 & 4: Destroy any existing socket and clear stale session data
+  // from the DB so creds.registered is fresh and won't cause WhatsApp rejections
   await destroySocket(userId);
+
+  if (existingSession.length > 0) {
+    await db
+      .update(whatsappSessionsTable)
+      .set({ sessionData: null, status: "pending_pairing", updatedAt: new Date() })
+      .where(eq(whatsappSessionsTable.userId, userId));
+  }
 
   const sessionDir = getSessionDir(userId);
   const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
+  // Fetch latest supported Baileys version from WhatsApp servers
+  const { version } = await fetchLatestBaileysVersion();
+
+  // ROOT CAUSE 3: printQRInTerminal MUST be false when using pairing code method
   const sock = makeWASocket({
+    version,
     auth: state as AuthenticationState,
     printQRInTerminal: false,
     logger: logger.child({ component: "baileys", userId }) as any,
-    browser: ["WaTracker Pro", "Chrome", "1.0.0"],
+    browser: ["WaTracker Pro", "Chrome", "120.0.0"],
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: false,
   });
 
   const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS);
@@ -128,140 +162,168 @@ export async function requestPairingCode(userId: number, phoneNumber: string): P
   };
   activeSockets.set(userId, entry);
 
-  const cleanPhone = phoneNumber.replace(/\D/g, "");
-
-  // Track whether the pairing code has already been resolved so that a
-  // subsequent connection-close event (which is normal after the user scans)
-  // doesn't spuriously reject the in-flight promise.
-  let codeObtained = false;
-  let connectionCloseReject: ((e: Error) => void) | null = null;
-
-  const connectionFailedPromise = new Promise<never>((_, reject) => {
-    connectionCloseReject = (err: Error) => {
-      // Only reject if we haven't obtained the code yet.
-      if (!codeObtained) reject(err);
-    };
-  });
-
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect, isNewLogin } = update;
+  // ROOT CAUSE 1 FIX: Wrap the entire flow in a Promise.
+  // requestPairingCode() is called INSIDE the connection.update listener,
+  // only after connection === 'connecting' OR !!qr — never immediately.
+  return new Promise((resolve, reject) => {
+    let codeRequested = false;
+    let codeObtained = false;
 
-    if (isNewLogin) {
-      entry.connectionAccepted = true;
-    }
-
-    if (connection === "open") {
-      entry.connectionAccepted = true;
-      try {
-        const credsData = fs.readFileSync(path.join(sessionDir, "creds.json"), "utf8");
-        await db
-          .update(whatsappSessionsTable)
-          .set({
-            status: "connected",
-            connectedAt: new Date(),
-            lastActiveAt: new Date(),
-            sessionData: encrypt(credsData),
-            updatedAt: new Date(),
-          })
-          .where(eq(whatsappSessionsTable.userId, userId));
-      } catch (e) {
-        logger.error({ e }, "Failed to save WhatsApp session");
-      }
-    }
-
-    if (connection === "close") {
-      const boomStatusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-      const loggedOut = boomStatusCode === DisconnectReason.loggedOut;
-
-      if (connectionCloseReject) {
-        connectionCloseReject(new Error("Could not connect to WhatsApp. Please try again."));
-        connectionCloseReject = null;
-      }
-
-      if (loggedOut) {
-        await db
-          .update(whatsappSessionsTable)
-          .set({ status: "disconnected", updatedAt: new Date() })
-          .where(eq(whatsappSessionsTable.userId, userId));
-        activeSockets.delete(userId);
-      }
-    }
-  });
-
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => {
+    const timeout = setTimeout(() => {
       if (!codeObtained) {
-        const err = new Error("Could not reach WhatsApp. Please check your internet connection and try again.");
-        if (connectionCloseReject) {
-          connectionCloseReject(err);
-          connectionCloseReject = null;
-        }
-        reject(err);
+        cleanup();
+        reject(
+          makeApiError(
+            "Could not reach WhatsApp. Please check your internet connection and try again.",
+            408
+          )
+        );
       }
-    }, 30_000);
-  });
+    }, PAIRING_REQUEST_TIMEOUT_MS);
 
-  try {
-    // Call requestPairingCode immediately — Baileys queues the request
-    // internally until the WebSocket handshake completes.  The previous
-    // 1200 ms arbitrary delay meant the connection was often already closed
-    // before the request was ever sent, causing the race to fail instantly.
-    const code = await Promise.race([
-      sock.requestPairingCode(cleanPhone),
-      connectionFailedPromise,
-      timeoutPromise,
-    ]);
-
-    codeObtained = true;
-    connectionCloseReject = null;
-
-    entry.pairingCode = code;
-    entry.pairingCodeExpiresAt = expiresAt;
-
-    const masked = maskPhone(phoneNumber);
-
-    await db
-      .insert(whatsappSessionsTable)
-      .values({
-        userId,
-        phoneNumber: encrypt(phoneNumber),
-        maskedPhone: masked,
-        status: "pending_pairing",
-        pairingCode: code,
-        pairingCodeExpiresAt: expiresAt,
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: whatsappSessionsTable.userId,
-        set: {
-          phoneNumber: encrypt(phoneNumber),
-          maskedPhone: masked,
-          status: "pending_pairing",
-          pairingCode: code,
-          pairingCodeExpiresAt: expiresAt,
-          updatedAt: new Date(),
-        },
-      });
-
-    return { pairingCode: code, expiresAt: expiresAt.toISOString() };
-  } catch (e: any) {
-    connectionCloseReject = null;
-    destroySocket(userId);
-    const msg: string = e?.message ?? "WhatsApp server error";
-    const lowerMsg = msg.toLowerCase();
-    if (
-      lowerMsg.includes("not registered") ||
-      lowerMsg.includes("does not exist") ||
-      lowerMsg.includes("invalid phone")
-    ) {
-      const err = new Error("This phone number doesn't appear to be registered on WhatsApp.");
-      (err as any).statusCode = 400;
-      throw err;
+    function cleanup() {
+      clearTimeout(timeout);
+      sock.ev.removeAllListeners("connection.update");
     }
-    throw new Error("Could not connect to WhatsApp. Please try again.");
-  }
+
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect, qr, isNewLogin } = update;
+
+      if (isNewLogin) {
+        entry.connectionAccepted = true;
+      }
+
+      // ROOT CAUSE 1 FIX: Only call requestPairingCode when socket is in
+      // 'connecting' state OR a QR is available — NEVER before this point.
+      if ((connection === "connecting" || !!qr) && !codeRequested) {
+        codeRequested = true;
+
+        try {
+          const code = await sock.requestPairingCode(cleanPhone);
+
+          if (!code) {
+            cleanup();
+            reject(makeApiError("WhatsApp returned an empty code. Please try again.", 502));
+            return;
+          }
+
+          codeObtained = true;
+          entry.pairingCode = code;
+          entry.pairingCodeExpiresAt = expiresAt;
+
+          const masked = maskPhone(phoneNumber);
+
+          try {
+            await db
+              .insert(whatsappSessionsTable)
+              .values({
+                userId,
+                phoneNumber: encrypt(phoneNumber),
+                maskedPhone: masked,
+                status: "pending_pairing",
+                pairingCode: code,
+                pairingCodeExpiresAt: expiresAt,
+                updatedAt: new Date(),
+              })
+              .onConflictDoUpdate({
+                target: whatsappSessionsTable.userId,
+                set: {
+                  phoneNumber: encrypt(phoneNumber),
+                  maskedPhone: masked,
+                  status: "pending_pairing",
+                  pairingCode: code,
+                  pairingCodeExpiresAt: expiresAt,
+                  sessionData: null,
+                  updatedAt: new Date(),
+                },
+              });
+          } catch (dbErr) {
+            logger.error({ dbErr }, "Failed to save pairing code to DB");
+          }
+
+          cleanup();
+          resolve({ pairingCode: code, expiresAt: expiresAt.toISOString() });
+        } catch (err: any) {
+          if (!codeObtained) {
+            cleanup();
+            const msg: string = err?.message ?? "WhatsApp server error";
+            const lowerMsg = msg.toLowerCase();
+            const boomStatus = (err as Boom)?.output?.statusCode;
+
+            if (
+              lowerMsg.includes("not registered") ||
+              lowerMsg.includes("does not exist") ||
+              lowerMsg.includes("invalid phone")
+            ) {
+              reject(
+                makeApiError(
+                  "This phone number doesn't appear to be registered on WhatsApp.",
+                  400
+                )
+              );
+            } else if (boomStatus === 428 || lowerMsg.includes("428")) {
+              reject(
+                makeApiError(
+                  "Connection was not ready. Please wait a moment and try again.",
+                  428
+                )
+              );
+            } else if (boomStatus === 401 || lowerMsg.includes("401")) {
+              reject(
+                makeApiError("WhatsApp rejected the connection. Please try again.", 401)
+              );
+            } else {
+              reject(makeApiError("Could not connect to WhatsApp. Please try again.", 500));
+            }
+          }
+        }
+      }
+
+      // Handle pairing accepted — socket becomes open
+      if (connection === "open") {
+        entry.connectionAccepted = true;
+        try {
+          const credsData = fs.readFileSync(path.join(sessionDir, "creds.json"), "utf8");
+          await db
+            .update(whatsappSessionsTable)
+            .set({
+              status: "connected",
+              connectedAt: new Date(),
+              lastActiveAt: new Date(),
+              sessionData: encrypt(credsData),
+              updatedAt: new Date(),
+            })
+            .where(eq(whatsappSessionsTable.userId, userId));
+        } catch (e) {
+          logger.error({ e }, "Failed to save WhatsApp session after open");
+        }
+      }
+
+      // ROOT CAUSE 6 FIX: If the connection closes before we got a code, reject.
+      if (connection === "close" && !codeObtained) {
+        const boomStatusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+        const loggedOut = boomStatusCode === DisconnectReason.loggedOut;
+
+        if (loggedOut) {
+          await db
+            .update(whatsappSessionsTable)
+            .set({ status: "disconnected", updatedAt: new Date() })
+            .where(eq(whatsappSessionsTable.userId, userId));
+          activeSockets.delete(userId);
+        }
+
+        if (!codeRequested) {
+          cleanup();
+          const httpStatus = boomStatusCode === 401 ? 401 : 500;
+          reject(
+            makeApiError("Could not connect to WhatsApp. Please try again.", httpStatus)
+          );
+        }
+      }
+    });
+  });
 }
 
 export async function getConnectionStatus(userId: number): Promise<{
@@ -271,13 +333,21 @@ export async function getConnectionStatus(userId: number): Promise<{
   pairingCode?: string;
   pairingCodeExpiresAt?: string;
 }> {
-  const rows = await db.select().from(whatsappSessionsTable).where(eq(whatsappSessionsTable.userId, userId)).limit(1);
+  const rows = await db
+    .select()
+    .from(whatsappSessionsTable)
+    .where(eq(whatsappSessionsTable.userId, userId))
+    .limit(1);
   if (rows.length === 0) return { status: "not_connected" };
 
   const row = rows[0];
   const entry = activeSockets.get(userId);
 
-  if (row.status === "pending_pairing" && row.pairingCodeExpiresAt && new Date() > row.pairingCodeExpiresAt) {
+  if (
+    row.status === "pending_pairing" &&
+    row.pairingCodeExpiresAt &&
+    new Date() > row.pairingCodeExpiresAt
+  ) {
     return {
       status: "pending_pairing",
       pairingCode: row.pairingCode ?? undefined,
@@ -289,8 +359,15 @@ export async function getConnectionStatus(userId: number): Promise<{
     status: (row.status as ConnectionStatus) ?? "not_connected",
     phoneNumber: row.maskedPhone ?? undefined,
     connectedAt: row.connectedAt?.toISOString(),
-    pairingCode: row.status === "pending_pairing" ? (entry?.pairingCode ?? row.pairingCode ?? undefined) : undefined,
-    pairingCodeExpiresAt: row.status === "pending_pairing" ? (entry?.pairingCodeExpiresAt?.toISOString() ?? row.pairingCodeExpiresAt?.toISOString()) : undefined,
+    pairingCode:
+      row.status === "pending_pairing"
+        ? (entry?.pairingCode ?? row.pairingCode ?? undefined)
+        : undefined,
+    pairingCodeExpiresAt:
+      row.status === "pending_pairing"
+        ? (entry?.pairingCodeExpiresAt?.toISOString() ??
+          row.pairingCodeExpiresAt?.toISOString())
+        : undefined,
   };
 }
 
@@ -299,14 +376,17 @@ export async function getPairingCodeStatus(userId: number): Promise<{
   status: "waiting" | "accepted" | "expired" | "error";
 }> {
   const entry = activeSockets.get(userId);
-  const rows = await db.select().from(whatsappSessionsTable).where(eq(whatsappSessionsTable.userId, userId)).limit(1);
+  const rows = await db
+    .select()
+    .from(whatsappSessionsTable)
+    .where(eq(whatsappSessionsTable.userId, userId))
+    .limit(1);
 
   if (rows.length === 0) return { accepted: false, status: "waiting" };
 
   const row = rows[0];
 
   if (row.status === "connected") return { accepted: true, status: "accepted" };
-
   if (entry?.connectionAccepted) return { accepted: true, status: "accepted" };
 
   if (row.pairingCodeExpiresAt && new Date() > row.pairingCodeExpiresAt) {
@@ -324,8 +404,14 @@ export async function disconnect(userId: number): Promise<void> {
     .where(eq(whatsappSessionsTable.userId, userId));
 }
 
-export async function reconnect(userId: number): Promise<{ status: "connected" | "failed" }> {
-  const rows = await db.select().from(whatsappSessionsTable).where(eq(whatsappSessionsTable.userId, userId)).limit(1);
+export async function reconnect(
+  userId: number
+): Promise<{ status: "connected" | "failed" }> {
+  const rows = await db
+    .select()
+    .from(whatsappSessionsTable)
+    .where(eq(whatsappSessionsTable.userId, userId))
+    .limit(1);
   if (rows.length === 0 || !rows[0].sessionData) return { status: "failed" };
 
   const row = rows[0];
@@ -336,11 +422,16 @@ export async function reconnect(userId: number): Promise<{ status: "connected" |
     fs.writeFileSync(path.join(sessionDir, "creds.json"), credsData, "utf8");
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+    const { version } = await fetchLatestBaileysVersion();
+
     const sock = makeWASocket({
+      version,
       auth: state as AuthenticationState,
       printQRInTerminal: false,
       logger: logger.child({ component: "baileys", userId }) as any,
-      browser: ["WaTracker Pro", "Chrome", "1.0.0"],
+      browser: ["WaTracker Pro", "Chrome", "120.0.0"],
+      syncFullHistory: false,
+      generateHighQualityLinkPreview: false,
     });
 
     const entry: SocketEntry = { socket: sock, connectionAccepted: false, sessionDir };
@@ -349,18 +440,28 @@ export async function reconnect(userId: number): Promise<{ status: "connected" |
     sock.ev.on("creds.update", saveCreds);
     sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
       if (connection === "open") {
-        await db.update(whatsappSessionsTable).set({ status: "connected", lastActiveAt: new Date(), updatedAt: new Date() }).where(eq(whatsappSessionsTable.userId, userId));
+        await db
+          .update(whatsappSessionsTable)
+          .set({ status: "connected", lastActiveAt: new Date(), updatedAt: new Date() })
+          .where(eq(whatsappSessionsTable.userId, userId));
       }
       if (connection === "close") {
-        const loggedOut = (lastDisconnect?.error as Boom)?.output?.statusCode === DisconnectReason.loggedOut;
+        const loggedOut =
+          (lastDisconnect?.error as Boom)?.output?.statusCode === DisconnectReason.loggedOut;
         if (loggedOut) {
-          await db.update(whatsappSessionsTable).set({ status: "disconnected", updatedAt: new Date() }).where(eq(whatsappSessionsTable.userId, userId));
+          await db
+            .update(whatsappSessionsTable)
+            .set({ status: "disconnected", updatedAt: new Date() })
+            .where(eq(whatsappSessionsTable.userId, userId));
           activeSockets.delete(userId);
         }
       }
     });
 
-    await db.update(whatsappSessionsTable).set({ status: "connected", updatedAt: new Date() }).where(eq(whatsappSessionsTable.userId, userId));
+    await db
+      .update(whatsappSessionsTable)
+      .set({ status: "connected", updatedAt: new Date() })
+      .where(eq(whatsappSessionsTable.userId, userId));
     return { status: "connected" };
   } catch (e) {
     logger.error({ e }, "Failed to reconnect WhatsApp session");

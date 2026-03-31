@@ -79,7 +79,9 @@ export function useWhatsAppConnection(isPolling = false) {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error ?? "Failed to request pairing code.");
+        const err = new Error(data.error ?? "Failed to request pairing code.") as any;
+        err.httpStatus = res.status;
+        throw err;
       }
       return data as { pairingCode: string; expiresAt: string };
     },

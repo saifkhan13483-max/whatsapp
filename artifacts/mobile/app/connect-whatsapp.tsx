@@ -44,6 +44,8 @@ export default function ConnectWhatsAppScreen() {
   const [phoneError, setPhoneError] = useState<string | undefined>();
   const [pairingCode, setPairingCode] = useState<string>("");
   const [pairingExpiresAt, setPairingExpiresAt] = useState<string>("");
+  const [retryCountdown, setRetryCountdown] = useState(0);
+  const retryIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const {
     connectionStatus,
@@ -57,6 +59,12 @@ export default function ConnectWhatsAppScreen() {
     setIsPolling,
     refetchStatus,
   } = useWhatsAppConnection(currentStep === 2);
+
+  useEffect(() => {
+    return () => {
+      if (retryIntervalRef.current) clearInterval(retryIntervalRef.current);
+    };
+  }, []);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -117,6 +125,33 @@ export default function ConnectWhatsAppScreen() {
     return true;
   }
 
+  function startRetryCountdown() {
+    if (retryIntervalRef.current) clearInterval(retryIntervalRef.current);
+    setRetryCountdown(5);
+    retryIntervalRef.current = setInterval(() => {
+      setRetryCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(retryIntervalRef.current!);
+          retryIntervalRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }
+
+  function getPairingErrorMessage(e: any): string {
+    const status: number = e?.httpStatus ?? 0;
+    if (status === 400) return "Invalid phone number. Please check and try again.";
+    if (status === 401) return "WhatsApp rejected the connection. Please try again.";
+    if (status === 408) return "Request timed out. Check your internet and retry.";
+    if (status === 409) return "WhatsApp is already connected. Go to Settings to manage it.";
+    if (status === 428) return "Connection not ready. Wait a moment and try again.";
+    if (status === 429) return "Too many attempts. Please wait 10 minutes.";
+    if (status === 502) return "WhatsApp returned an empty code. Please try again.";
+    return e?.message ?? "Could not connect to WhatsApp. Please try again.";
+  }
+
   async function handleGetPairingCode() {
     if (!validatePhone()) return;
     const fullPhone = `${selectedCountry.dialCode}${phoneValue.replace(/\D/g, "")}`;
@@ -127,11 +162,12 @@ export default function ConnectWhatsAppScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       animateStep(2);
     } catch (e: any) {
+      startRetryCountdown();
       Toast.show({
         type: "error",
         text1: "Failed to get pairing code",
-        text2: e?.message ?? "Please try again.",
-        visibilityTime: 4000,
+        text2: getPairingErrorMessage(e),
+        visibilityTime: 5000,
       });
     }
   }
@@ -212,6 +248,7 @@ export default function ConnectWhatsAppScreen() {
             phoneValue={phoneValue}
             phoneError={phoneError}
             isLoading={isRequestingCode}
+            retryCountdown={retryCountdown}
             onCountryChange={setSelectedCountry}
             onPhoneChange={setPhoneValue}
             onSubmit={handleGetPairingCode}
@@ -246,11 +283,13 @@ function Step1({
   phoneValue,
   phoneError,
   isLoading,
+  retryCountdown,
   onCountryChange,
   onPhoneChange,
   onSubmit,
 }: any) {
   const isValid = phoneValue.replace(/\D/g, "").length >= 7;
+  const isDisabled = isLoading || retryCountdown > 0 || !isValid;
 
   return (
     <View style={styles.stepContent}>
@@ -291,10 +330,10 @@ function Step1({
       <TouchableOpacity
         style={[
           styles.primaryBtn,
-          { backgroundColor: colors.primary, opacity: isLoading || !isValid ? 0.5 : 1 },
+          { backgroundColor: colors.primary, opacity: isDisabled ? 0.5 : 1 },
         ]}
         onPress={onSubmit}
-        disabled={isLoading || !isValid}
+        disabled={isDisabled}
         accessibilityLabel="Get pairing code"
         accessibilityRole="button"
       >
@@ -302,7 +341,7 @@ function Step1({
           <ActivityIndicator color="#fff" />
         ) : (
           <Text style={[typography.bodyMedium, { color: "#fff", fontFamily: "Inter_700Bold" }]}>
-            Get Pairing Code
+            {retryCountdown > 0 ? `Try Again in ${retryCountdown}s` : "Get Pairing Code"}
           </Text>
         )}
       </TouchableOpacity>
