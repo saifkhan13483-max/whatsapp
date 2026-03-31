@@ -17,6 +17,7 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/providers/AuthProvider";
 import { useTheme } from "@/providers/ThemeProvider";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
+import { useBiometricLock } from "@/hooks/useBiometricLock";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { SectionHeader } from "@/components/ui/SectionHeader";
 import { typography } from "@/constants/typography";
@@ -29,6 +30,7 @@ export default function SettingsScreen() {
   const { theme, setTheme } = useTheme();
   const { data: settings } = useSettings();
   const updateSettings = useUpdateSettings();
+  const { enabled: biometricEnabled, supported: biometricSupported, toggle: toggleBiometric } = useBiometricLock();
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   async function handleLogout() {
@@ -157,15 +159,35 @@ export default function SettingsScreen() {
 
         <SectionHeader title="Privacy & Security" />
         <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          {biometricSupported && (
+            <SettingRow
+              icon="finger-print"
+              label="Biometric Lock"
+              subtitle="Require biometric to open app"
+              right={
+                <ToggleSwitch
+                  value={biometricEnabled}
+                  onValueChange={(v) => toggleBiometric(v)}
+                />
+              }
+            />
+          )}
           <SettingRow
             icon="shield-checkmark"
             label="Keyword Alerts"
+            subtitle="Monitor message keywords"
             onPress={() => router.push("/keyword-alerts")}
           />
           <SettingRow
             icon="time"
             label="Do Not Disturb"
-            subtitle="Quiet hours"
+            subtitle="Quiet hours settings"
+            onPress={() => {}}
+          />
+          <SettingRow
+            icon="lock-closed"
+            label="Data & Privacy"
+            subtitle="Manage your stored data"
             onPress={() => {}}
           />
         </View>

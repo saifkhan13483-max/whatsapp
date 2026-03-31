@@ -1,124 +1,135 @@
-import React, { useState, useRef } from "react";
+import React, { useRef, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   Dimensions,
   TouchableOpacity,
-  ScrollView,
-  Image,
+  FlatList,
+  Animated,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useColors } from "@/constants/colors";
-import { setItem, StorageKeys } from "@/lib/storage";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+
+import { useColors } from "@/hooks/useColors";
+import { setItem, StorageKeys } from "@/lib/storage";
+import { typography } from "@/constants/typography";
+import { spacing } from "@/constants/spacing";
 
 const { width } = Dimensions.get("window");
 
-const slides = [
-  {
-    icon: "eye" as const,
-    color: "#25D366",
-    title: "Track WhatsApp Activity",
-    description:
-      "Monitor when your contacts come online and offline in real time, with detailed session history and statistics.",
-  },
+const SLIDES = [
   {
     icon: "shield-checkmark" as const,
-    color: "#34B7F1",
-    title: "Parental Controls",
-    description:
-      "Keep your family safe. Set keyword alerts, monitor chat activity, and get instant notifications for suspicious content.",
-  },
-  {
-    icon: "image" as const,
-    color: "#7C4DFF",
-    title: "View Once Recovery",
-    description:
-      "Recover view-once photos and videos that disappear after viewing. Never miss important media again.",
+    color: "#25D366",
+    title: "Track Any Contact",
+    description: "Monitor WhatsApp activity in real-time with zero setup. See when your contacts come online and offline.",
   },
   {
     icon: "notifications" as const,
-    color: "#FFC107",
+    color: "#34B7F1",
     title: "Smart Alerts",
-    description:
-      "Get notified when contacts come online at unusual hours, exceed time limits, or trigger keyword alerts.",
+    description: "Get instant notifications for late-night activity, long sessions, and keywords you care about.",
+  },
+  {
+    icon: "bar-chart" as const,
+    color: "#FF9500",
+    title: "Detailed Reports",
+    description: "Visual charts, heatmaps, and exportable CSV reports to understand activity patterns at a glance.",
+  },
+  {
+    icon: "people" as const,
+    color: "#AF52DE",
+    title: "Family Dashboard",
+    description: "Monitor your entire family from one unified view. Keep your loved ones safe online.",
+  },
+  {
+    icon: "lock-closed" as const,
+    color: "#FF3B30",
+    title: "Privacy First",
+    description: "Biometric lock, encrypted data, and full control over your information. Your privacy is protected.",
   },
 ];
 
 export default function OnboardingScreen() {
   const colors = useColors();
-  const router = useRouter();
-  const scrollRef = useRef<ScrollView>(null);
-  const [current, setCurrent] = useState(0);
+  const insets = useSafeAreaInsets();
+  const flatRef = useRef<FlatList>(null);
+  const scrollX = useRef(new Animated.Value(0)).current;
+  const [currentIndex, setCurrentIndex] = useState(0);
 
   function goNext() {
     Haptics.selectionAsync();
-    if (current < slides.length - 1) {
-      const next = current + 1;
-      scrollRef.current?.scrollTo({ x: next * width, animated: true });
-      setCurrent(next);
+    if (currentIndex < SLIDES.length - 1) {
+      const next = currentIndex + 1;
+      flatRef.current?.scrollToIndex({ index: next, animated: true });
+      setCurrentIndex(next);
     } else {
       finish();
     }
   }
 
-  function skip() {
-    finish();
-  }
-
   async function finish() {
     await setItem(StorageKeys.ONBOARDING_DONE, true);
-    router.replace("/auth");
+    router.replace("/(tabs)" as any);
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <TouchableOpacity style={styles.skipBtn} onPress={skip}>
-        <Text style={[styles.skipText, { color: colors.secondaryText }]}>Skip</Text>
+    <View style={[styles.root, { backgroundColor: colors.background }]}>
+      <TouchableOpacity
+        style={[styles.skipBtn, { top: insets.top + 16 }]}
+        onPress={finish}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <Text style={[typography.bodyMedium, { color: colors.secondaryText }]}>Skip</Text>
       </TouchableOpacity>
 
-      <ScrollView
-        ref={scrollRef}
+      <FlatList
+        ref={flatRef}
+        data={SLIDES}
+        keyExtractor={(_, i) => String(i)}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         scrollEnabled={false}
-        style={styles.scroll}
-      >
-        {slides.map((slide, i) => (
-          <View key={i} style={[styles.slide, { width }]}>
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+          { useNativeDriver: false }
+        )}
+        renderItem={({ item }) => (
+          <View style={[styles.slide, { width }]}>
             <LinearGradient
-              colors={[slide.color + "22", "transparent"]}
-              style={styles.iconContainer}
+              colors={[item.color + "22", "transparent"]}
+              style={styles.iconWrap}
             >
-              <Ionicons name={slide.icon} size={80} color={slide.color} />
+              <Ionicons name={item.icon} size={80} color={item.color} />
             </LinearGradient>
-            <Text style={[styles.title, { color: colors.text }]}>{slide.title}</Text>
-            <Text style={[styles.description, { color: colors.secondaryText }]}>
-              {slide.description}
-            </Text>
+            <Text style={[styles.title, { color: colors.text }]}>{item.title}</Text>
+            <Text style={[styles.desc, { color: colors.secondaryText }]}>{item.description}</Text>
           </View>
-        ))}
-      </ScrollView>
+        )}
+      />
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.xl }]}>
         <View style={styles.dots}>
-          {slides.map((_, i) => (
-            <View
-              key={i}
-              style={[
-                styles.dot,
-                {
-                  backgroundColor:
-                    i === current ? colors.primary : colors.border,
-                  width: i === current ? 20 : 8,
-                },
-              ]}
-            />
-          ))}
+          {SLIDES.map((_, i) => {
+            const isActive = i === currentIndex;
+            return (
+              <View
+                key={i}
+                style={[
+                  styles.dot,
+                  {
+                    backgroundColor: isActive ? colors.primary : colors.border,
+                    width: isActive ? 24 : 8,
+                  },
+                ]}
+              />
+            );
+          })}
         </View>
         <TouchableOpacity
           style={[styles.btn, { backgroundColor: colors.primary }]}
@@ -126,9 +137,13 @@ export default function OnboardingScreen() {
           activeOpacity={0.85}
         >
           <Text style={styles.btnText}>
-            {current === slides.length - 1 ? "Get Started" : "Next"}
+            {currentIndex === SLIDES.length - 1 ? "Get Started" : "Next"}
           </Text>
-          <Ionicons name="arrow-forward" size={18} color="#fff" />
+          <Ionicons
+            name={currentIndex === SLIDES.length - 1 ? "checkmark" : "arrow-forward"}
+            size={18}
+            color="#fff"
+          />
         </TouchableOpacity>
       </View>
     </View>
@@ -136,21 +151,11 @@ export default function OnboardingScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  root: { flex: 1 },
   skipBtn: {
     position: "absolute",
-    top: 56,
-    right: 24,
+    right: spacing.xl,
     zIndex: 10,
-  },
-  skipText: {
-    fontSize: 15,
-    fontFamily: "Inter_500Medium",
-  },
-  scroll: {
-    flex: 1,
   },
   slide: {
     flex: 1,
@@ -160,7 +165,7 @@ const styles = StyleSheet.create({
     paddingTop: 80,
     gap: 24,
   },
-  iconContainer: {
+  iconWrap: {
     width: 160,
     height: 160,
     borderRadius: 80,
@@ -173,16 +178,15 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     textAlign: "center",
   },
-  description: {
+  desc: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",
     textAlign: "center",
     lineHeight: 24,
   },
   footer: {
-    paddingHorizontal: 24,
-    paddingBottom: 48,
-    gap: 24,
+    paddingHorizontal: spacing.xl,
+    gap: spacing.xl,
   },
   dots: {
     flexDirection: "row",

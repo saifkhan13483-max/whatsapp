@@ -9,7 +9,7 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-  Alert,
+  Dimensions,
 } from "react-native";
 import { router } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -21,143 +21,265 @@ import { useAuth } from "@/providers/AuthProvider";
 import { typography } from "@/constants/typography";
 import { spacing } from "@/constants/spacing";
 
+const { height: SCREEN_H } = Dimensions.get("window");
+
+function validateEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+function validatePassword(pw: string) {
+  return pw.length >= 8 && /[0-9]/.test(pw) && /[a-zA-Z]/.test(pw);
+}
+
 export default function AuthScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { login, register } = useAuth();
-  const [isLogin, setIsLogin] = useState(true);
+  const [mode, setMode] = useState<"login" | "register">("login");
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
-  const [form, setForm] = useState({ username: "", email: "", password: "" });
+  const [form, setForm] = useState({
+    username: "",
+    email: "",
+    password: "",
+    confirmPassword: "",
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function setField(key: string, val: string) {
+    setForm((f) => ({ ...f, [key]: val }));
+    if (errors[key]) setErrors((e) => ({ ...e, [key]: "" }));
+  }
+
+  function validate() {
+    const errs: Record<string, string> = {};
+    if (mode === "register" && form.username.trim().length < 3) {
+      errs.username = "Username must be at least 3 characters";
+    }
+    if (!validateEmail(form.email)) {
+      errs.email = "Enter a valid email address";
+    }
+    if (!validatePassword(form.password)) {
+      errs.password = "Password must be 8+ characters with letters and numbers";
+    }
+    if (mode === "register" && form.password !== form.confirmPassword) {
+      errs.confirmPassword = "Passwords do not match";
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
 
   async function handleSubmit() {
-    if (!form.email || !form.password) {
-      Alert.alert("Error", "Please fill all required fields");
-      return;
-    }
+    if (!validate()) return;
     setLoading(true);
     try {
-      if (isLogin) {
+      if (mode === "login") {
         await login(form.email, form.password);
       } else {
-        if (!form.username) {
-          Alert.alert("Error", "Username is required");
-          setLoading(false);
-          return;
-        }
         await register(form.username, form.email, form.password);
       }
-      router.back();
+      router.replace("/(tabs)" as any);
     } catch (e: any) {
-      Alert.alert("Error", e?.message ?? "Something went wrong");
+      setErrors({ _global: e?.message ?? "Something went wrong. Please try again." });
     } finally {
       setLoading(false);
     }
   }
 
+  const gradientHeight = SCREEN_H * 0.35;
+
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
+      style={{ flex: 1, backgroundColor: colors.background }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
-      <LinearGradient colors={["#075E54", "#128C7E"]} style={styles.hero}>
-        <View style={{ paddingTop: Platform.OS === "web" ? 67 : insets.top + 20 }}>
-          <View style={styles.logoCircle}>
-            <Ionicons name="phone-portrait" size={40} color="#075E54" />
-          </View>
-          <Text style={[typography.h2, { color: "#fff", marginTop: spacing.base, textAlign: "center" }]}>
-            WaTracker Pro
-          </Text>
-          <Text style={[typography.caption, { color: "rgba(255,255,255,0.75)", textAlign: "center" }]}>
-            WhatsApp Activity Monitor
-          </Text>
+      <LinearGradient
+        colors={["#075E54", "#128C7E"]}
+        style={[styles.gradient, { height: gradientHeight, paddingTop: Platform.OS === "web" ? 67 : insets.top + 16 }]}
+      >
+        <View style={styles.logoCircle}>
+          <Ionicons name="phone-portrait" size={36} color="#075E54" />
         </View>
+        <Text style={[typography.h2, { color: "#fff", marginTop: spacing.sm, textAlign: "center" }]}>
+          WaTracker Pro
+        </Text>
+        <Text style={[typography.caption, { color: "rgba(255,255,255,0.75)", textAlign: "center" }]}>
+          WhatsApp Activity Monitor
+        </Text>
       </LinearGradient>
 
       <ScrollView
-        style={[styles.form, { backgroundColor: colors.background }]}
+        style={[styles.card, { backgroundColor: colors.background }]}
         contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + spacing.xl }}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.toggle}>
-          {["Sign In", "Create Account"].map((label, i) => {
-            const active = (i === 0) === isLogin;
-            return (
-              <TouchableOpacity
-                key={label}
-                style={[styles.toggleBtn, active && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
-                onPress={() => setIsLogin(i === 0)}
+        <View style={[styles.segmented, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
+          {(["login", "register"] as const).map((m) => (
+            <TouchableOpacity
+              key={m}
+              style={[
+                styles.segment,
+                mode === m && { backgroundColor: colors.primary, shadowColor: colors.primary },
+              ]}
+              onPress={() => {
+                setMode(m);
+                setErrors({});
+              }}
+            >
+              <Text
+                style={[
+                  typography.bodyMedium,
+                  { color: mode === m ? "#fff" : colors.secondaryText },
+                ]}
               >
-                <Text style={[typography.bodyMedium, { color: active ? colors.primary : colors.secondaryText }]}>
-                  {label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
+                {m === "login" ? "Sign In" : "Create Account"}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        {!isLogin && (
+        {errors._global ? (
+          <View style={[styles.errorBanner, { backgroundColor: colors.danger + "15", borderColor: colors.danger + "40" }]}>
+            <Ionicons name="alert-circle-outline" size={16} color={colors.danger} />
+            <Text style={[typography.caption, { color: colors.danger, flex: 1 }]}>{errors._global}</Text>
+          </View>
+        ) : null}
+
+        {mode === "register" && (
           <View style={styles.field}>
-            <Text style={[typography.label, { color: colors.secondaryText, marginBottom: 6 }]}>Username</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
-              placeholder="Your name"
-              placeholderTextColor={colors.muted}
-              value={form.username}
-              onChangeText={(t) => setForm({ ...form, username: t })}
-              autoCapitalize="words"
-            />
+            <Text style={[styles.label, { color: colors.secondaryText }]}>Username</Text>
+            <View
+              style={[
+                styles.inputRow,
+                {
+                  backgroundColor: colors.inputBg,
+                  borderColor: errors.username ? colors.danger : colors.border,
+                },
+              ]}
+            >
+              <Ionicons name="person-outline" size={18} color={errors.username ? colors.danger : colors.muted} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: colors.text }]}
+                placeholder="Your name"
+                placeholderTextColor={colors.muted}
+                value={form.username}
+                onChangeText={(t) => setField("username", t)}
+                autoCapitalize="words"
+              />
+            </View>
+            {errors.username ? (
+              <Text style={[styles.errorText, { color: colors.danger }]}>{errors.username}</Text>
+            ) : null}
           </View>
         )}
 
         <View style={styles.field}>
-          <Text style={[typography.label, { color: colors.secondaryText, marginBottom: 6 }]}>Email</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
-            placeholder="your@email.com"
-            placeholderTextColor={colors.muted}
-            value={form.email}
-            onChangeText={(t) => setForm({ ...form, email: t })}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
+          <Text style={[styles.label, { color: colors.secondaryText }]}>Email</Text>
+          <View
+            style={[
+              styles.inputRow,
+              {
+                backgroundColor: colors.inputBg,
+                borderColor: errors.email ? colors.danger : colors.border,
+              },
+            ]}
+          >
+            <Ionicons name="mail-outline" size={18} color={errors.email ? colors.danger : colors.muted} style={styles.inputIcon} />
+            <TextInput
+              style={[styles.input, { color: colors.text }]}
+              placeholder="your@email.com"
+              placeholderTextColor={colors.muted}
+              value={form.email}
+              onChangeText={(t) => setField("email", t)}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoComplete="email"
+            />
+          </View>
+          {errors.email ? (
+            <Text style={[styles.errorText, { color: colors.danger }]}>{errors.email}</Text>
+          ) : null}
         </View>
 
         <View style={styles.field}>
-          <Text style={[typography.label, { color: colors.secondaryText, marginBottom: 6 }]}>Password</Text>
-          <View style={[styles.passWrap, { backgroundColor: colors.inputBg, borderColor: colors.border }]}>
+          <Text style={[styles.label, { color: colors.secondaryText }]}>Password</Text>
+          <View
+            style={[
+              styles.inputRow,
+              {
+                backgroundColor: colors.inputBg,
+                borderColor: errors.password ? colors.danger : colors.border,
+              },
+            ]}
+          >
+            <Ionicons name="lock-closed-outline" size={18} color={errors.password ? colors.danger : colors.muted} style={styles.inputIcon} />
             <TextInput
-              style={[styles.passInput, { color: colors.text }]}
+              style={[styles.input, { color: colors.text }]}
               placeholder="••••••••"
               placeholderTextColor={colors.muted}
               value={form.password}
-              onChangeText={(t) => setForm({ ...form, password: t })}
+              onChangeText={(t) => setField("password", t)}
               secureTextEntry={!showPass}
               autoCapitalize="none"
             />
-            <TouchableOpacity onPress={() => setShowPass(!showPass)}>
-              <Ionicons name={showPass ? "eye-off" : "eye"} size={20} color={colors.muted} />
+            <TouchableOpacity onPress={() => setShowPass(!showPass)} style={styles.eyeBtn}>
+              <Ionicons name={showPass ? "eye-off-outline" : "eye-outline"} size={20} color={colors.muted} />
             </TouchableOpacity>
           </View>
+          {errors.password ? (
+            <Text style={[styles.errorText, { color: colors.danger }]}>{errors.password}</Text>
+          ) : (
+            mode === "register" && (
+              <Text style={[styles.hint, { color: colors.muted }]}>8+ characters, include letters and numbers</Text>
+            )
+          )}
         </View>
 
+        {mode === "register" && (
+          <View style={styles.field}>
+            <Text style={[styles.label, { color: colors.secondaryText }]}>Confirm Password</Text>
+            <View
+              style={[
+                styles.inputRow,
+                {
+                  backgroundColor: colors.inputBg,
+                  borderColor: errors.confirmPassword ? colors.danger : colors.border,
+                },
+              ]}
+            >
+              <Ionicons name="lock-closed-outline" size={18} color={errors.confirmPassword ? colors.danger : colors.muted} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.input, { color: colors.text }]}
+                placeholder="••••••••"
+                placeholderTextColor={colors.muted}
+                value={form.confirmPassword}
+                onChangeText={(t) => setField("confirmPassword", t)}
+                secureTextEntry={!showConfirm}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={() => setShowConfirm(!showConfirm)} style={styles.eyeBtn}>
+                <Ionicons name={showConfirm ? "eye-off-outline" : "eye-outline"} size={20} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+            {errors.confirmPassword ? (
+              <Text style={[styles.errorText, { color: colors.danger }]}>{errors.confirmPassword}</Text>
+            ) : null}
+          </View>
+        )}
+
         <TouchableOpacity
-          style={[styles.submitBtn, { backgroundColor: colors.primary, opacity: loading ? 0.7 : 1 }]}
+          style={[styles.submitBtn, { backgroundColor: colors.primary, opacity: loading ? 0.75 : 1 }]}
           onPress={handleSubmit}
           disabled={loading}
+          activeOpacity={0.85}
         >
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={[typography.bodyMedium, { color: "#fff" }]}>
-              {isLogin ? "Sign In" : "Create Account"}
-            </Text>
+            <Text style={styles.submitText}>{mode === "login" ? "Sign In" : "Create Account"}</Text>
           )}
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => router.back()} style={{ marginTop: spacing.base, alignItems: "center" }}>
-          <Text style={[typography.caption, { color: colors.secondaryText }]}>Continue without signing in</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -165,14 +287,95 @@ export default function AuthScreen() {
 }
 
 const styles = StyleSheet.create({
-  hero: { padding: spacing.xl, paddingBottom: spacing.xl, alignItems: "center" },
-  logoCircle: { width: 80, height: 80, borderRadius: 20, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", alignSelf: "center" },
-  form: { flex: 1, borderTopLeftRadius: 24, borderTopRightRadius: 24, marginTop: -20 },
-  toggle: { flexDirection: "row", marginBottom: spacing.xl, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e9edef" },
-  toggleBtn: { flex: 1, paddingVertical: spacing.md, alignItems: "center" },
+  gradient: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.xl,
+    gap: 4,
+  },
+  logoCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 18,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  card: {
+    flex: 1,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    marginTop: -24,
+  },
+  segmented: {
+    flexDirection: "row",
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 3,
+    marginBottom: spacing.xl,
+  },
+  segment: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: spacing.base,
+  },
   field: { marginBottom: spacing.base },
-  input: { padding: spacing.md, borderRadius: 8, borderWidth: 1, fontSize: 15, fontFamily: "Inter_400Regular" },
-  passWrap: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.md, borderRadius: 8, borderWidth: 1 },
-  passInput: { flex: 1, padding: spacing.md, fontSize: 15, fontFamily: "Inter_400Regular" },
-  submitBtn: { padding: spacing.base, borderRadius: 8, alignItems: "center", marginTop: spacing.sm },
+  label: {
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    marginBottom: 6,
+  },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    minHeight: 48,
+  },
+  inputIcon: { marginRight: 8 },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    paddingVertical: 12,
+  },
+  eyeBtn: { padding: 4 },
+  errorText: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    marginTop: 4,
+    marginLeft: 2,
+  },
+  hint: {
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    marginTop: 4,
+    marginLeft: 2,
+  },
+  submitBtn: {
+    padding: 16,
+    borderRadius: 10,
+    alignItems: "center",
+    marginTop: spacing.sm,
+  },
+  submitText: {
+    color: "#fff",
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+  },
 });

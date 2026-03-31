@@ -205,9 +205,56 @@ GestureHandlerRootView → SafeAreaProvider → ErrorBoundary → QueryClientPro
 
 **Auth Gate Logic (AuthGate component in _layout.tsx):**
 - Not authenticated → redirect to `/auth`
-- Authenticated but onboarding not done (StorageKeys.ONBOARDING_DONE ≠ "true") → redirect to `/onboarding`
+- Authenticated but onboarding not done (StorageKeys.ONBOARDING_DONE is falsy) → redirect to `/onboarding`
 - Biometric lock enabled + not passed → overlay BiometricGate over Stack
 - Otherwise → render Stack normally
+- StorageKey ONBOARDING_DONE is stored as boolean `true` via setItem; auth gate reads as boolean and uses `!!val`
+
+**Section 6 Screen Implementations (complete per spec):**
+
+*6.1 Onboarding (app/onboarding.tsx):*
+- 5 slides: Shield/Track, Bell/Alerts, BarChart/Reports, People/Family, Lock/Privacy
+- FlatList with pagingEnabled + scrollEnabled={false}
+- Active dot: 24px wide, inactive: 8px
+- On complete: saves ONBOARDING_DONE=true, navigates to `/(tabs)` 
+
+*6.2 Auth (app/auth.tsx):*
+- Layout: LinearGradient (35% height) + card form (65% height) overlapping 24px
+- SegmentedControl for Sign In / Create Account modes
+- Fields: username (register), email, password+toggle, confirmPassword (register)
+- Inline field-level error messages with red border + icon
+- Password rules: 8+ chars, letters and numbers (enforced in validate())
+- Error banner for server errors (no Alert)
+- On success: router.replace("/(tabs)")
+
+*6.3 Dashboard (app/(tabs)/index.tsx):*
+- Expandable search bar (icon in header → animated full-width input)
+- Filter chips: All / Online / Offline / Favorites / Recent / High Activity / Never Seen
+- FlatList for contacts (not ScrollView+map)
+- FAB (56px circle, green) bottom-right → opens slide-up AddContact bottom sheet
+- Quick Actions: horizontal pill scroll (Reports/Keywords/Groups/Compare/Timeline/Upgrade)
+- EnhancedContactCard: sparkline bars, favorite star, long-press action sheet
+- Stats strip: Tracked / Online Now / Alerts
+
+*6.4 Contact Detail (app/contact/[id].tsx):*
+- AnimatedRing (Reanimated pulse) around avatar when contact is online
+- Live online timer: setInterval every 1s, displays HH:MM:SS
+- Favorite toggle in nav bar header (star icon)
+- 4 horizontal-scroll stat cards: Total Time / Sessions / Avg Session / Longest
+- Range picker: Today / Week / Month chips
+- Sessions timeline: grouped by date (Today/Yesterday/date string), each row with time + DurationChip
+- "View in Timeline" button linking to /activity-timeline
+- Weekly bar chart: pure RN Views, 3 segments per day (Day/Evening/Night)
+- Peak hours heatmap: HeatmapGrid component (24×7)
+- Predicted activity section: peak hour + streak from stats
+- Notes textarea: 1s debounced auto-save + checkmark Animated badge
+
+*6.8 Notifications (app/(tabs)/notifications.tsx):*
+- Filter chips: All / Online / Late Night / Limit Exceeded / Keyword Match / System
+
+*6.11 Settings (app/(tabs)/settings.tsx):*
+- Biometric Lock toggle in Privacy & Security section (uses useBiometricLock hook)
+- Data & Privacy row added
 
 **Design System (Section 3):**
 - All colors in `constants/colors.ts` via `useColors()` hook — never hardcode hex values

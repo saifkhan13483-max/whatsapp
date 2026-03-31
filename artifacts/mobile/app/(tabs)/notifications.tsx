@@ -16,9 +16,10 @@ import { spacing } from "@/constants/spacing";
 const FILTERS = [
   { label: "All", value: "" },
   { label: "Online", value: "online" },
-  { label: "Offline", value: "offline" },
-  { label: "Keyword", value: "keyword" },
-  { label: "Report", value: "report" },
+  { label: "Late Night", value: "late_night" },
+  { label: "Limit Exceeded", value: "limit_exceeded" },
+  { label: "Keyword Match", value: "keyword" },
+  { label: "System", value: "system" },
 ];
 
 export default function NotificationsScreen() {

@@ -32,8 +32,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
 
   useEffect(() => {
-    getItem<string>(StorageKeys.ONBOARDING_DONE).then((val) => {
-      setOnboardingDone(val === "true");
+    getItem<boolean>(StorageKeys.ONBOARDING_DONE).then((val) => {
+      setOnboardingDone(!!val);
     });
   }, []);
 
