@@ -12,6 +12,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import Toast from "react-native-toast-message";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { BiometricGate } from "@/components/ui/BiometricGate";
@@ -155,6 +156,7 @@ export default function RootLayout() {
           </QueryClientProvider>
         </ErrorBoundary>
       </SafeAreaProvider>
+      <Toast />
     </GestureHandlerRootView>
   );
 }

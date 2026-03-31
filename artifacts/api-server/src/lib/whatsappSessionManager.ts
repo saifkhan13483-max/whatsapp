@@ -239,12 +239,17 @@ export async function requestPairingCode(userId: number, phoneNumber: string): P
     connectionCloseReject = null;
     destroySocket(userId);
     const msg: string = e?.message ?? "WhatsApp server error";
-    if (msg.toLowerCase().includes("phone")) {
+    const lowerMsg = msg.toLowerCase();
+    if (
+      lowerMsg.includes("not registered") ||
+      lowerMsg.includes("does not exist") ||
+      lowerMsg.includes("invalid phone")
+    ) {
       const err = new Error("This phone number doesn't appear to be registered on WhatsApp.");
       (err as any).statusCode = 400;
       throw err;
     }
-    throw new Error(msg);
+    throw new Error("Could not connect to WhatsApp. Please try again.");
   }
 }
 
