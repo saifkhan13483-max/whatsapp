@@ -5,9 +5,10 @@ import Animated, {
   useAnimatedStyle,
   withRepeat,
   withTiming,
-  interpolate,
+  Easing,
 } from "react-native-reanimated";
-import { useColors } from "@/hooks/useColors";
+import { LinearGradient } from "expo-linear-gradient";
+import { useColors } from "@/constants/colors";
 
 interface Props {
   width: number | string;
@@ -18,28 +19,44 @@ interface Props {
 
 export function SkeletonLoader({ width, height, borderRadius = 8, style }: Props) {
   const colors = useColors();
-  const progress = useSharedValue(0);
+  const translateX = useSharedValue(-300);
 
   useEffect(() => {
-    progress.value = withRepeat(withTiming(1, { duration: 1000 }), -1, true);
+    translateX.value = withRepeat(
+      withTiming(300, { duration: 1200, easing: Easing.linear }),
+      -1,
+      false
+    );
   }, []);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(progress.value, [0, 1], [0.4, 1]),
+  const shimmerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
   }));
 
+  const baseColor = colors.border;
+  const highlightColor = colors.surface;
+
   return (
-    <Animated.View
+    <View
       style={[
         {
           width: width as number,
           height,
           borderRadius,
-          backgroundColor: colors.border,
+          backgroundColor: baseColor,
+          overflow: "hidden",
         },
-        animatedStyle,
         style,
       ]}
-    />
+    >
+      <Animated.View style={[StyleSheet.absoluteFill, shimmerStyle]}>
+        <LinearGradient
+          colors={[baseColor, highlightColor, baseColor]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={{ width: 200, height: "100%" as unknown as number }}
+        />
+      </Animated.View>
+    </View>
   );
 }

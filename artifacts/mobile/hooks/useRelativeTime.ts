@@ -26,7 +26,7 @@ export function useRelativeTime(date: Date | string | number | null | undefined)
     }
 
     update();
-    const interval = setInterval(update, 30_000);
+    const interval = setInterval(update, 60_000);
     return () => clearInterval(interval);
   }, [date]);
 

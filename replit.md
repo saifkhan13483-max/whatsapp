@@ -198,7 +198,28 @@ Every package extends `tsconfig.base.json` which sets `composite: true`.
 
 ### `artifacts/mobile` (`@workspace/mobile`)
 
-Expo mobile app. Entry: `app/_layout.tsx`. Providers: SafeAreaProvider, QueryClientProvider, ThemeProvider, AuthProvider, NotificationProvider.
+Expo mobile app. Entry: `app/_layout.tsx`.
+
+**Provider wrapping order (outermost → innermost):**
+GestureHandlerRootView → SafeAreaProvider → ErrorBoundary → QueryClientProvider → AuthProvider → ThemeProvider → NotificationProvider → AuthGate → Stack
+
+**Auth Gate Logic (AuthGate component in _layout.tsx):**
+- Not authenticated → redirect to `/auth`
+- Authenticated but onboarding not done (StorageKeys.ONBOARDING_DONE ≠ "true") → redirect to `/onboarding`
+- Biometric lock enabled + not passed → overlay BiometricGate over Stack
+- Otherwise → render Stack normally
+
+**Design System (Section 3):**
+- All colors in `constants/colors.ts` via `useColors()` hook — never hardcode hex values
+- `shadows` export in `constants/colors.ts` with spec values (opacity:0.08, radius:8, elevation:3)
+- Typography scale in `constants/typography.ts` (H1 28px Inter_700Bold through Small 11px)
+- Spacing scale in `constants/spacing.ts` (4, 8, 12, 16, 20, 24, 32, 40, 48)
+- Border radius in `constants/spacing.ts` (radius.sm=8, .md=12, .chip=24, .avatar=40, .full=999)
+- `PulsingDot`: Reanimated scale 1→1.4→1, 1200ms total, Easing.inOut, infinite repeat
+- `SkeletonLoader`: LinearGradient shimmer (translateX -300→300) — NOT opacity pulse
+- Password validation: min 8 chars + at least 1 number + at least 1 letter
+- Tabs use Feather icons (spec requirement) with unread badge on Alerts tab
+- `useRelativeTime` auto-updates every 60 seconds
 
 ### `artifacts/api-server` (`@workspace/api-server`)
 

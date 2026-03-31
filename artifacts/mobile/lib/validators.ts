@@ -9,13 +9,21 @@ export function validateEmail(email: string): ValidationResult {
 
 export function validatePassword(password: string): ValidationResult {
   if (!password) return { valid: false, error: "Password is required" };
-  if (password.length < 6) return { valid: false, error: "Password must be at least 6 characters" };
+  if (password.length < 8) return { valid: false, error: "Password must be at least 8 characters" };
+  if (!/[0-9]/.test(password)) return { valid: false, error: "Password must contain at least 1 number" };
+  if (!/[a-zA-Z]/.test(password)) return { valid: false, error: "Password must contain at least 1 letter" };
+  return { valid: true };
+}
+
+export function validateConfirmPassword(password: string, confirm: string): ValidationResult {
+  if (!confirm) return { valid: false, error: "Please confirm your password" };
+  if (password !== confirm) return { valid: false, error: "Passwords do not match" };
   return { valid: true };
 }
 
 export function validateUsername(username: string): ValidationResult {
   if (!username.trim()) return { valid: false, error: "Username is required" };
-  if (username.trim().length < 2) return { valid: false, error: "Username must be at least 2 characters" };
+  if (username.trim().length < 3) return { valid: false, error: "Username must be at least 3 characters" };
   if (username.trim().length > 30) return { valid: false, error: "Username must be under 30 characters" };
   const re = /^[a-zA-Z0-9_.-]+$/;
   if (!re.test(username.trim())) return { valid: false, error: "Username can only contain letters, numbers, _, . or -" };
@@ -31,7 +39,6 @@ export function validatePhoneNumber(phone: string): ValidationResult {
 
 export function validateContactName(name: string): ValidationResult {
   if (!name.trim()) return { valid: false, error: "Name is required" };
-  if (name.trim().length < 1) return { valid: false, error: "Name is required" };
   if (name.trim().length > 50) return { valid: false, error: "Name must be under 50 characters" };
   return { valid: true };
 }
