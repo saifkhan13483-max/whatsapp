@@ -163,7 +163,7 @@ Express 5 REST API running on port 8080.
 
 ## Database Schema (PostgreSQL)
 
-Tables created via SQL (drizzle-kit push didn't detect new tables):
+Tables created via `drizzle-kit push` (run from `lib/db`):
 - users
 - contacts
 - contact_favorites
@@ -180,6 +180,10 @@ Tables created via SQL (drizzle-kit push didn't detect new tables):
 - dnd_rules
 - keyword_alerts
 - geofence_zones
+
+## Metro Bundler Configuration
+
+The `artifacts/mobile/metro.config.js` explicitly sets `projectRoot = __dirname` and `watchFolders = [workspaceRoot]` with `nodeModulesPaths` pointing to both the mobile app's and the workspace root's `node_modules`. This ensures Metro resolves modules from the correct root in the pnpm monorepo context and avoids the blank-screen "Unable to resolve ./index from workspace root" error.
 
 ## TypeScript & Composite Projects
 
