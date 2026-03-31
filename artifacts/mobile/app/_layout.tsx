@@ -14,6 +14,26 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
 
+// Suppress fontfaceobserver "Xms timeout exceeded" unhandled rejections BEFORE
+// Expo's error overlay registers its own handler. Must run at module scope.
+if (Platform.OS === "web" && typeof window !== "undefined") {
+  window.addEventListener(
+    "unhandledrejection",
+    (e: PromiseRejectionEvent) => {
+      const msg: string =
+        e?.reason?.message ?? e?.reason?.toString?.() ?? "";
+      if (
+        msg.includes("timeout exceeded") ||
+        msg.toLowerCase().includes("fontface")
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    },
+    true
+  );
+}
+
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { BiometricGate } from "@/components/ui/BiometricGate";
 import { NetworkBanner } from "@/components/ui/NetworkBanner";
@@ -89,53 +109,40 @@ function RootNavigator() {
 }
 
 export default function RootLayout() {
-  const [fontsLoaded, fontError] = useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
-  });
-  const [fontTimeout, setFontTimeout] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // On web, pass an empty map so useFonts returns [true, null] instantly —
+  // this completely avoids fontfaceobserver and its 6-second timeout error.
+  // Inter is loaded via a CSS <link> injected below instead.
+  const [fontsLoaded, fontError] = useFonts(
+    Platform.OS === "web"
+      ? {}
+      : {
+          Inter_400Regular,
+          Inter_500Medium,
+          Inter_600SemiBold,
+          Inter_700Bold,
+        }
+  );
 
-  // Suppress the fontfaceobserver "Xms timeout exceeded" unhandled rejection
-  // that fires on web when Google Fonts CDN is unreachable. The app already
-  // has its own graceful fallback timeout below — this just stops the dev
-  // error overlay from appearing.
+  // Inject Inter via CSS on web — fast, no fontfaceobserver involved.
   useEffect(() => {
-    if (Platform.OS !== "web" || typeof window === "undefined") return;
-
-    function handleUnhandledRejection(event: PromiseRejectionEvent) {
-      const msg: string =
-        event?.reason?.message ??
-        event?.reason?.toString?.() ??
-        "";
-      if (msg.includes("timeout exceeded") || msg.toLowerCase().includes("fontface")) {
-        event.preventDefault();
-      }
-    }
-
-    window.addEventListener("unhandledrejection", handleUnhandledRejection);
-    return () => window.removeEventListener("unhandledrejection", handleUnhandledRejection);
-  }, []);
-
-  // Show app with system fonts after 2 s if Google Fonts CDN hasn't responded.
-  // This fires well before fontfaceobserver's own 6 s timeout, preventing the
-  // unhandled-rejection from ever being queued.
-  useEffect(() => {
-    timeoutRef.current = setTimeout(() => setFontTimeout(true), 2000);
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
+    if (Platform.OS !== "web" || typeof document === "undefined") return;
+    const id = "inter-google-font";
+    if (document.getElementById(id)) return;
+    const link = document.createElement("link");
+    link.id = id;
+    link.rel = "stylesheet";
+    link.href =
+      "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap";
+    document.head.appendChild(link);
   }, []);
 
   useEffect(() => {
-    if (fontsLoaded || fontError || fontTimeout) {
+    if (fontsLoaded || fontError) {
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded, fontError, fontTimeout]);
+  }, [fontsLoaded, fontError]);
 
-  if (!fontsLoaded && !fontError && !fontTimeout) return null;
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
