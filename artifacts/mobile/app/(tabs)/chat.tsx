@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   FlatList,
@@ -8,36 +8,37 @@ import {
   Platform,
   RefreshControl,
   Alert,
+  TextInput,
+  useWindowDimensions,
 } from "react-native";
 import { router } from "expo-router";
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/useColors";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
 import { Conversation } from "@/components/ui/ConversationRow";
-import { SearchBar } from "@/components/ui/SearchBar";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
-import { ChipFilter } from "@/components/ui/ChipFilter";
-import { BottomSheet } from "@/components/ui/BottomSheet";
 import { SwipeableRow } from "@/components/ui/SwipeableRow";
 import { AvatarCircle } from "@/components/ui/AvatarCircle";
 import { BadgeCount } from "@/components/ui/BadgeCount";
+import { BottomSheet } from "@/components/ui/BottomSheet";
 import { typography } from "@/constants/typography";
 import { spacing } from "@/constants/spacing";
 import { formatTimeLabel } from "@/lib/formatters";
 
 const FILTERS = [
-  { label: "All", value: "all" },
-  { label: "Unread", value: "unread" },
-  { label: "Has Media", value: "media" },
-  { label: "View-Once", value: "viewonce" },
+  { label: "All", value: "all", icon: "chatbubbles" },
+  { label: "Unread", value: "unread", icon: "mail-unread" },
+  { label: "Has Media", value: "media", icon: "image" },
+  { label: "View-Once", value: "viewonce", icon: "eye" },
 ];
 
-function ConversationRowWithPrivacy({
+function ConversationItem({
   conversation,
   privacyMode,
   onPress,
@@ -47,28 +48,35 @@ function ConversationRowWithPrivacy({
   onPress: () => void;
 }) {
   const colors = useColors();
+  const unread = (conversation.unreadCount ?? 0) > 0;
+
   return (
     <TouchableOpacity
-      style={[styles.convRow, { borderBottomColor: colors.border }]}
+      style={[
+        styles.convRow,
+        {
+          backgroundColor: unread ? colors.primary + "08" : colors.card,
+          borderBottomColor: colors.border,
+        },
+      ]}
       onPress={onPress}
       activeOpacity={0.7}
-      accessibilityLabel={`Conversation with ${conversation.contactName}`}
+      accessibilityLabel={`Conversation with ${conversation.contactName}, ${unread ? `${conversation.unreadCount} unread` : "no unread messages"}`}
       accessibilityRole="button"
     >
-      <AvatarCircle
-        name={conversation.contactName}
-        size={50}
-        isOnline={conversation.isOnline}
-      />
+      <AvatarCircle name={conversation.contactName} size={52} isOnline={conversation.isOnline} />
       <View style={styles.convContent}>
         <View style={styles.convTopRow}>
           <Text
-            style={[typography.bodyMedium, { color: colors.text, flex: 1 }]}
+            style={[
+              typography.bodyMedium,
+              { color: colors.text, flex: 1, fontFamily: unread ? "Inter_600SemiBold" : "Inter_500Medium" },
+            ]}
             numberOfLines={1}
           >
             {conversation.contactName}
           </Text>
-          <Text style={[typography.caption, { color: colors.secondaryText }]}>
+          <Text style={[typography.small, { color: unread ? colors.primary : colors.secondaryText }]}>
             {formatTimeLabel(conversation.lastMessageTime)}
           </Text>
         </View>
@@ -77,16 +85,29 @@ function ConversationRowWithPrivacy({
             <View style={[styles.blurredPreview, { backgroundColor: colors.border }]} />
           ) : (
             <Text
-              style={[typography.caption, { color: colors.secondaryText, flex: 1 }]}
+              style={[
+                typography.caption,
+                {
+                  color: unread ? colors.text : colors.secondaryText,
+                  flex: 1,
+                  fontFamily: unread ? "Inter_500Medium" : "Inter_400Regular",
+                },
+              ]}
               numberOfLines={1}
             >
-              {conversation.lastMessage}
+              {conversation.lastMessage || "No messages yet"}
             </Text>
           )}
-          {(conversation.unreadCount ?? 0) > 0 && (
+          {unread && (
             <BadgeCount count={conversation.unreadCount} color={colors.primary} />
           )}
         </View>
+        {conversation.isOnline && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }} />
+            <Text style={[typography.small, { color: colors.primary }]}>Online</Text>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -95,10 +116,14 @@ function ConversationRowWithPrivacy({
 export default function ChatTrackerScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const qc = useQueryClient();
   const [query, setQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
   const [privacyMode, setPrivacyMode] = useState(false);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+
+  const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   const {
     data: conversations = [],
@@ -108,42 +133,50 @@ export default function ChatTrackerScreen() {
   } = useQuery<Conversation[]>({
     queryKey: ["conversations"],
     queryFn: () => apiFetch<Conversation[]>("/conversations").catch(() => []),
+    refetchInterval: 30000,
   });
 
-  const filtered = conversations.filter((c) => {
-    const q = query.toLowerCase();
-    const matchesSearch =
-      c.contactName.toLowerCase().includes(q) ||
-      (c.lastMessage ?? "").toLowerCase().includes(q);
-    if (!matchesSearch) return false;
-    if (activeFilter === "unread") return (c.unreadCount ?? 0) > 0;
-    return true;
-  });
+  const totalUnread = useMemo(
+    () => conversations.reduce((acc, c) => acc + (c.unreadCount ?? 0), 0),
+    [conversations]
+  );
+
+  const filtered = useMemo(
+    () =>
+      conversations.filter((c) => {
+        const q = query.toLowerCase();
+        const matchesSearch =
+          c.contactName.toLowerCase().includes(q) ||
+          (c.lastMessage ?? "").toLowerCase().includes(q);
+        if (!matchesSearch) return false;
+        if (activeFilter === "unread") return (c.unreadCount ?? 0) > 0;
+        return true;
+      }),
+    [conversations, query, activeFilter]
+  );
 
   const togglePrivacy = useCallback(async () => {
     await Haptics.selectionAsync();
     setPrivacyMode((v) => !v);
   }, []);
 
-  const handleMute = useCallback(
-    (item: Conversation) => {
-      Alert.alert("Mute alerts", `Mute all alerts for ${item.contactName}?`, [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Mute",
-          onPress: () =>
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
-        },
-      ]);
-    },
-    []
-  );
-
-  const handleArchive = useCallback((_item: Conversation) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  const handleMute = useCallback((item: Conversation) => {
+    Alert.alert(`Mute ${item.contactName}`, "Silence alerts for this conversation?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Mute",
+        onPress: () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success),
+      },
+    ]);
   }, []);
 
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
+  const handleArchive = useCallback((item: Conversation) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(`Archive ${item.contactName}`, "Move this conversation to archive?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Archive", onPress: () => {} },
+    ]);
+  }, []);
 
   const renderItem = useCallback(
     ({ item }: { item: Conversation }) => (
@@ -165,7 +198,7 @@ export default function ChatTrackerScreen() {
           },
         ]}
       >
-        <ConversationRowWithPrivacy
+        <ConversationItem
           conversation={item}
           privacyMode={privacyMode}
           onPress={() => router.push(`/chat/${item.contactId}` as any)}
@@ -178,86 +211,139 @@ export default function ChatTrackerScreen() {
   return (
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <View
-        style={[
-          styles.header,
-          {
-            backgroundColor: colors.primaryDarkest,
-            paddingTop: topPad + spacing.sm,
-          },
-        ]}
+      <LinearGradient
+        colors={[colors.primaryDarkest, colors.primaryDark] as string[]}
+        style={[styles.header, { paddingTop: topPad + spacing.sm }]}
       >
-        <Text style={[typography.h3, { color: colors.headerText, flex: 1 }]}>
-          Chat Tracker
-        </Text>
-        <TouchableOpacity
-          onPress={togglePrivacy}
-          style={styles.iconBtn}
-          accessibilityLabel={privacyMode ? "Disable privacy mode" : "Enable privacy mode"}
-          accessibilityRole="button"
-        >
-          <Feather
-            name={privacyMode ? "eye-off" : "eye"}
-            size={22}
-            color={privacyMode ? colors.warning : colors.headerText}
-          />
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => setFilterSheetOpen(true)}
-          style={styles.iconBtn}
-          accessibilityLabel="Filter conversations"
-          accessibilityRole="button"
-        >
-          <Feather name="filter" size={22} color={colors.headerText} />
-        </TouchableOpacity>
-      </View>
+        <View style={styles.headerRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={[typography.h3, { color: "#fff" }]}>Chat Tracker</Text>
+            {totalUnread > 0 && (
+              <Text style={[typography.small, { color: "rgba(255,255,255,0.75)" }]}>
+                {totalUnread} unread message{totalUnread !== 1 ? "s" : ""}
+              </Text>
+            )}
+          </View>
+          <TouchableOpacity
+            onPress={togglePrivacy}
+            style={[
+              styles.iconBtn,
+              privacyMode && { backgroundColor: colors.warning + "30" },
+            ]}
+            accessibilityLabel={privacyMode ? "Disable privacy mode" : "Enable privacy mode"}
+            accessibilityRole="button"
+          >
+            <Feather
+              name={privacyMode ? "eye-off" : "eye"}
+              size={21}
+              color={privacyMode ? colors.warning : "#fff"}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setFilterSheetOpen(true)}
+            style={styles.iconBtn}
+            accessibilityLabel="Filter conversations"
+            accessibilityRole="button"
+          >
+            <Feather name="filter" size={21} color="#fff" />
+            {activeFilter !== "all" && (
+              <View style={[styles.filterDot, { backgroundColor: colors.warning }]} />
+            )}
+          </TouchableOpacity>
+        </View>
 
-      {/* Search bar */}
-      <SearchBar
-        value={query}
-        onChangeText={setQuery}
-        placeholder="Search by name or message..."
-      />
+        {/* Search */}
+        <View style={[styles.searchBar, { backgroundColor: "rgba(255,255,255,0.15)" }]}>
+          <Ionicons name="search" size={16} color="rgba(255,255,255,0.7)" />
+          <TextInput
+            style={[styles.searchInput, { color: "#fff" }]}
+            placeholder="Search by name or message..."
+            placeholderTextColor="rgba(255,255,255,0.5)"
+            value={query}
+            onChangeText={setQuery}
+            returnKeyType="search"
+          />
+          {query.length > 0 && (
+            <TouchableOpacity onPress={() => setQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </LinearGradient>
 
       {/* Filter chips */}
-      <ChipFilter
-        options={FILTERS}
-        selected={activeFilter}
-        onSelect={setActiveFilter}
-      />
+      <View style={[styles.chipRow, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        {FILTERS.map((f) => {
+          const active = activeFilter === f.value;
+          return (
+            <TouchableOpacity
+              key={f.value}
+              style={[
+                styles.chip,
+                { borderColor: active ? colors.primary : "transparent" },
+              ]}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setActiveFilter(f.value);
+              }}
+              accessibilityLabel={`Filter ${f.label}`}
+              accessibilityRole="button"
+            >
+              <Ionicons
+                name={f.icon as any}
+                size={13}
+                color={active ? colors.primary : colors.secondaryText}
+              />
+              <Text
+                style={[
+                  typography.caption,
+                  { color: active ? colors.primary : colors.secondaryText, fontFamily: active ? "Inter_600SemiBold" : "Inter_400Regular" },
+                ]}
+              >
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
       {/* Privacy mode banner */}
       {privacyMode && (
         <View
           style={[
             styles.privacyBanner,
-            { backgroundColor: colors.warning + "20", borderColor: colors.warning + "40" },
+            { backgroundColor: colors.warning + "18", borderColor: colors.warning + "50" },
           ]}
         >
           <Ionicons name="eye-off" size={14} color={colors.warning} />
-          <Text style={[typography.small, { color: colors.warning }]}>
-            Privacy mode on — message previews hidden
+          <Text style={[typography.small, { color: colors.warning, flex: 1 }]}>
+            Privacy mode on — message previews are hidden
           </Text>
+          <TouchableOpacity onPress={togglePrivacy}>
+            <Text style={[typography.small, { color: colors.warning, fontFamily: "Inter_600SemiBold" }]}>
+              Turn Off
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
 
       {/* Content */}
       {isLoading ? (
-        <View style={{ gap: 1 }}>
-          {Array.from({ length: 8 }).map((_, i) => (
-            <SkeletonLoader key={i} width="100%" height={72} borderRadius={0} />
+        <View style={{ gap: 1, padding: 0 }}>
+          {Array.from({ length: 7 }).map((_, i) => (
+            <SkeletonLoader key={i} width="100%" height={76} borderRadius={0} />
           ))}
         </View>
       ) : filtered.length === 0 ? (
         <EmptyState
           icon="chatbubbles-outline"
-          title="No conversations"
+          title={query ? "No results found" : conversations.length === 0 ? "No conversations yet" : "No conversations match"}
           subtitle={
             query
-              ? "No results for your search"
+              ? `No conversations matching "${query}"`
               : conversations.length === 0
-              ? "Conversations will appear here when tracked"
-              : "No conversations match this filter"
+              ? "Conversations from tracked contacts will appear here"
+              : "Try a different filter or search term"
           }
         />
       ) : (
@@ -277,6 +363,9 @@ export default function ChatTrackerScreen() {
             paddingBottom: Platform.OS === "web" ? 120 : 80,
           }}
           showsVerticalScrollIndicator={false}
+          ItemSeparatorComponent={() => (
+            <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginLeft: 80 }} />
+          )}
         />
       )}
 
@@ -293,10 +382,8 @@ export default function ChatTrackerScreen() {
               style={[
                 styles.filterOption,
                 {
-                  backgroundColor:
-                    activeFilter === f.value ? colors.primary + "15" : colors.card,
-                  borderColor:
-                    activeFilter === f.value ? colors.primary : colors.border,
+                  backgroundColor: activeFilter === f.value ? colors.primary + "12" : colors.card,
+                  borderColor: activeFilter === f.value ? colors.primary : colors.border,
                 },
               ]}
               onPress={() => {
@@ -305,19 +392,23 @@ export default function ChatTrackerScreen() {
                 setFilterSheetOpen(false);
               }}
             >
+              <View style={[styles.filterOptionIcon, { backgroundColor: colors.primary + "15" }]}>
+                <Ionicons
+                  name={f.icon as any}
+                  size={18}
+                  color={activeFilter === f.value ? colors.primary : colors.secondaryText}
+                />
+              </View>
               <Text
                 style={[
                   typography.bodyMedium,
-                  {
-                    color:
-                      activeFilter === f.value ? colors.primary : colors.text,
-                  },
+                  { color: activeFilter === f.value ? colors.primary : colors.text, flex: 1 },
                 ]}
               >
                 {f.label}
               </Text>
               {activeFilter === f.value && (
-                <Ionicons name="checkmark" size={20} color={colors.primary} />
+                <Ionicons name="checkmark-circle" size={22} color={colors.primary} />
               )}
             </TouchableOpacity>
           ))}
@@ -330,11 +421,15 @@ export default function ChatTrackerScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
     paddingHorizontal: spacing.base,
-    paddingBottom: spacing.md,
-    gap: spacing.sm,
+    paddingBottom: spacing.base,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: spacing.sm,
   },
   iconBtn: {
     width: 40,
@@ -343,40 +438,70 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: 20,
   },
+  filterDot: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    borderRadius: 20,
+    paddingHorizontal: spacing.base,
+    paddingVertical: 9,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    paddingVertical: 0,
+  },
+  chipRow: {
+    flexDirection: "row",
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    gap: spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  chip: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
   privacyBanner: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs,
     marginHorizontal: spacing.base,
-    marginBottom: spacing.xs,
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    borderRadius: 8,
-    borderWidth: 1,
-  },
-  filterOption: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: spacing.base,
-    borderRadius: 12,
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: 10,
     borderWidth: 1,
   },
   convRow: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
+    paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: spacing.md,
-    backgroundColor: "transparent",
   },
-  convContent: { flex: 1 },
+  convContent: { flex: 1, gap: 2 },
   convTopRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 2,
+    gap: spacing.xs,
   },
   convBottomRow: {
     flexDirection: "row",
@@ -388,5 +513,20 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 6,
     opacity: 0.5,
+  },
+  filterOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.base,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  filterOptionIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
   },
 });

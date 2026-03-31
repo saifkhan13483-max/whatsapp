@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -12,9 +12,10 @@ import {
   KeyboardAvoidingView,
   Modal,
   Alert,
+  useWindowDimensions,
 } from "react-native";
 import { router } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import Animated, {
@@ -40,27 +41,26 @@ import type { Contact } from "@/components/ui/ContactCard";
 
 type FilterKey = "all" | "online" | "offline" | "favorites" | "recent" | "high" | "never";
 
-const FILTERS: { label: string; key: FilterKey }[] = [
-  { label: "All", key: "all" },
-  { label: "Online", key: "online" },
-  { label: "Offline", key: "offline" },
-  { label: "Favorites", key: "favorites" },
-  { label: "Recent", key: "recent" },
-  { label: "High Activity", key: "high" },
-  { label: "Never Seen", key: "never" },
+const FILTERS: { label: string; key: FilterKey; icon: string }[] = [
+  { label: "All", key: "all", icon: "people" },
+  { label: "Online", key: "online", icon: "radio-button-on" },
+  { label: "Offline", key: "offline", icon: "radio-button-off" },
+  { label: "Favorites", key: "favorites", icon: "star" },
+  { label: "Recent", key: "recent", icon: "time" },
+  { label: "High Activity", key: "high", icon: "trending-up" },
+  { label: "Never Seen", key: "never", icon: "eye-off" },
 ];
 
 const QUICK_ACTIONS = [
-  { icon: "bar-chart" as const, label: "Reports", route: "/reports" },
-  { icon: "shield-checkmark" as const, label: "Keywords", route: "/keyword-alerts" },
-  { icon: "people" as const, label: "Groups", route: "/contact-groups" },
-  { icon: "git-compare" as const, label: "Compare", route: "/compare" },
-  { icon: "time" as const, label: "Timeline", route: "/activity-timeline" },
-  { icon: "diamond" as const, label: "Upgrade", route: "/subscription" },
+  { icon: "bar-chart" as const, label: "Reports", route: "/reports", color: "#34B7F1" },
+  { icon: "shield-checkmark" as const, label: "Keywords", route: "/keyword-alerts", color: "#FFC107" },
+  { icon: "people" as const, label: "Groups", route: "/contact-groups", color: "#7C4DFF" },
+  { icon: "git-compare" as const, label: "Compare", route: "/compare", color: "#FF6B6B" },
+  { icon: "time" as const, label: "Timeline", route: "/activity-timeline", color: "#4CAF50" },
+  { icon: "diamond" as const, label: "Upgrade", route: "/subscription", color: "#FF9500" },
 ];
 
-const Sparkline = React.memo(function Sparkline({ values }: { values: number[] }) {
-  const colors = useColors();
+const Sparkline = React.memo(function Sparkline({ values, color }: { values: number[]; color: string }) {
   if (!values || values.length < 2) return <View style={{ width: 48 }} />;
   const max = Math.max(...values, 1);
   const barW = 4;
@@ -74,7 +74,7 @@ const Sparkline = React.memo(function Sparkline({ values }: { values: number[] }
             width: barW,
             height: Math.max(3, (v / max) * 24),
             borderRadius: 2,
-            backgroundColor: colors.primary + (i === values.slice(-8).length - 1 ? "ff" : "55"),
+            backgroundColor: color + (i === values.slice(-8).length - 1 ? "ff" : "66"),
           }}
         />
       ))}
@@ -97,54 +97,93 @@ const EnhancedContactCard = React.memo(function EnhancedContactCard({
 
   return (
     <TouchableOpacity
-      style={[styles.contactCard, { backgroundColor: colors.card, borderColor: colors.border }]}
-      onPress={onPress}
-      activeOpacity={0.7}
-      accessibilityLabel={`Contact ${contact.name}, ${contact.isOnline ? "online" : "offline"}`}
-      accessibilityRole="button"
-      onLongPress={() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        Alert.alert(contact.name, undefined, [
-          { text: isFavorite ? "Unfavorite" : "Add to Favorites", onPress: onFavorite },
-          { text: "View Details", onPress },
-          { text: "Cancel", style: "cancel" },
-        ]);
-      }}
-    >
-      <View style={styles.contactLeft}>
-        <AvatarCircle name={contact.name} isOnline={contact.isOnline} size={44} />
-      </View>
-      <View style={styles.contactInfo}>
-        <Text style={[typography.bodyMedium, { color: colors.text }]} numberOfLines={1}>
-          {contact.name}
-        </Text>
-        <Text style={[typography.caption, { color: colors.secondaryText }]} numberOfLines={1}>
-          {contact.isOnline
-            ? "Online now"
-            : contact.lastSeen
-            ? `Last seen ${formatRelativeTime(contact.lastSeen)}`
-            : contact.phoneNumber}
-        </Text>
-      </View>
-      <View style={styles.contactRight}>
-        <Sparkline values={contact.sparkline ?? [0, 1, 2, 1, 3, 2, 1, 2]} />
-        <TouchableOpacity
-          onPress={onFavorite}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          style={{ marginTop: 4 }}
-          accessibilityLabel={isFavorite ? `Remove ${contact.name} from favorites` : `Add ${contact.name} to favorites`}
-          accessibilityRole="button"
-        >
-          <Ionicons
-            name={isFavorite ? "star" : "star-outline"}
-            size={14}
-            color={isFavorite ? colors.warning : colors.muted}
+        style={[
+          styles.contactCard,
+          {
+            backgroundColor: colors.card,
+            borderColor: (contact as any).isOnline ? colors.primary + "40" : colors.border,
+            borderWidth: (contact as any).isOnline ? 1.5 : StyleSheet.hairlineWidth,
+          },
+        ]}
+        onPress={onPress}
+        activeOpacity={0.7}
+        accessibilityLabel={`Contact ${contact.name}, ${(contact as any).isOnline ? "online" : "offline"}`}
+        accessibilityRole="button"
+        onLongPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          Alert.alert(contact.name, undefined, [
+            { text: isFavorite ? "Unfavorite" : "Add to Favorites", onPress: onFavorite },
+            { text: "View Details", onPress },
+            { text: "Cancel", style: "cancel" },
+          ]);
+        }}
+      >
+        <AvatarCircle name={contact.name} isOnline={(contact as any).isOnline} size={46} />
+        <View style={styles.contactInfo}>
+          <Text style={[typography.bodyMedium, { color: colors.text }]} numberOfLines={1}>
+            {contact.name}
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            {(contact as any).isOnline ? (
+              <>
+                <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: colors.primary }} />
+                <Text style={[typography.caption, { color: colors.primary, fontFamily: "Inter_600SemiBold" }]}>
+                  Online now
+                </Text>
+              </>
+            ) : (
+              <Text style={[typography.caption, { color: colors.secondaryText }]} numberOfLines={1}>
+                {(contact as any).lastSeen
+                  ? `Last seen ${formatRelativeTime((contact as any).lastSeen)}`
+                  : contact.phoneNumber}
+              </Text>
+            )}
+          </View>
+        </View>
+        <View style={styles.contactRight}>
+          <Sparkline
+            values={(contact as any).sparkline ?? [1, 2, 1, 3, 2, 4, 2, 3]}
+            color={colors.primary}
           />
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            onPress={onFavorite}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ marginTop: 4 }}
+            accessibilityLabel={isFavorite ? `Remove ${contact.name} from favorites` : `Add ${contact.name} to favorites`}
+            accessibilityRole="button"
+          >
+            <Ionicons
+              name={isFavorite ? "star" : "star-outline"}
+              size={15}
+              color={isFavorite ? colors.warning : colors.muted}
+            />
+          </TouchableOpacity>
+        </View>
     </TouchableOpacity>
   );
 });
+
+function StatCard({
+  label,
+  value,
+  icon,
+  accent,
+}: {
+  label: string;
+  value: number;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent: string;
+}) {
+  return (
+    <View style={[styles.statCard, { backgroundColor: "rgba(255,255,255,0.15)" }]}>
+      <View style={[styles.statIcon, { backgroundColor: "rgba(255,255,255,0.2)" }]}>
+        <Ionicons name={icon} size={18} color="#fff" />
+      </View>
+      <Text style={[typography.h2, { color: "#fff", lineHeight: 32 }]}>{value}</Text>
+      <Text style={[typography.small, { color: "rgba(255,255,255,0.75)" }]}>{label}</Text>
+    </View>
+  );
+}
 
 function AddContactSheet({
   visible,
@@ -159,29 +198,27 @@ function AddContactSheet({
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
 
-  const slideY = useSharedValue(400);
+  const slideY = useSharedValue(500);
 
   React.useEffect(() => {
-    if (visible) {
-      slideY.value = withSpring(0, { damping: 18, stiffness: 200 });
-    } else {
-      slideY.value = withTiming(400, { duration: 200 });
-    }
+    slideY.value = visible ? withSpring(0, { damping: 18, stiffness: 200 }) : withTiming(500, { duration: 220 });
   }, [visible]);
 
-  const slideStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: slideY.value }],
-  }));
+  const slideStyle = useAnimatedStyle(() => ({ transform: [{ translateY: slideY.value }] }));
 
   async function handleAdd() {
-    if (!name.trim() || !phone.trim()) return;
+    if (!name.trim() || !phone.trim()) {
+      Alert.alert("Missing fields", "Please enter both a name and phone number.");
+      return;
+    }
     try {
       await addContact.mutateAsync({ name: name.trim(), phoneNumber: phone.trim() });
       setName("");
       setPhone("");
       onClose();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {
-      Alert.alert("Error", "Could not add contact");
+      Alert.alert("Error", "Could not add contact. Please try again.");
     }
   }
 
@@ -193,23 +230,21 @@ function AddContactSheet({
       <Animated.View
         style={[
           styles.sheet,
-          {
-            backgroundColor: colors.card,
-            paddingBottom: insets.bottom + spacing.base,
-          },
+          { backgroundColor: colors.card, paddingBottom: insets.bottom + spacing.base },
           slideStyle,
         ]}
       >
         <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
         <Text style={[typography.h3, { color: colors.text, marginBottom: spacing.xl }]}>Add Contact</Text>
 
-        <Text style={[styles.fieldLabel, { color: colors.secondaryText }]}>Name</Text>
+        <Text style={[styles.fieldLabel, { color: colors.secondaryText }]}>Display Name</Text>
         <TextInput
           style={[styles.sheetInput, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
-          placeholder="Contact name"
+          placeholder="e.g. John Doe"
           placeholderTextColor={colors.muted}
           value={name}
           onChangeText={setName}
+          returnKeyType="next"
           accessibilityLabel="Contact name input"
         />
 
@@ -221,18 +256,29 @@ function AddContactSheet({
           value={phone}
           onChangeText={setPhone}
           keyboardType="phone-pad"
+          returnKeyType="done"
+          onSubmitEditing={handleAdd}
           accessibilityLabel="Phone number input"
         />
 
         <TouchableOpacity
-          style={[styles.sheetBtn, { backgroundColor: colors.primary }]}
+          style={[
+            styles.sheetBtn,
+            { backgroundColor: name.trim() && phone.trim() ? colors.primary : colors.muted },
+          ]}
           onPress={handleAdd}
-          disabled={addContact.isPending}
+          disabled={addContact.isPending || !name.trim() || !phone.trim()}
           accessibilityLabel="Start tracking this contact"
           accessibilityRole="button"
         >
-          <Ionicons name="person-add" size={18} color={colors.headerText} />
-          <Text style={[styles.sheetBtnText, { color: colors.headerText }]}>Start Tracking</Text>
+          {addContact.isPending ? (
+            <Text style={[styles.sheetBtnText, { color: "#fff" }]}>Adding...</Text>
+          ) : (
+            <>
+              <Ionicons name="person-add" size={18} color="#fff" />
+              <Text style={[styles.sheetBtnText, { color: "#fff" }]}>Start Tracking</Text>
+            </>
+          )}
         </TouchableOpacity>
       </Animated.View>
     </Modal>
@@ -242,8 +288,10 @@ function AddContactSheet({
 export default function DashboardScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const { user } = useAuth();
+  const isWide = width >= 768;
 
   const { data: contacts = [], isLoading, refetch } = useContacts();
   const { data: notifications = [] } = useNotifications();
@@ -252,31 +300,11 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchVisible, setSearchVisible] = useState(false);
   const [addSheetVisible, setAddSheetVisible] = useState(false);
   const [favorites, setFavorites] = useState<Set<number>>(new Set());
 
-  const searchProgress = useSharedValue(0);
-
-  const onlineContacts = contacts.filter((c) => (c as any).isOnline);
-  const unreadCount = notifications.filter((n) => !n.read).length;
-
-  function toggleSearch() {
-    const next = !searchVisible;
-    if (next) {
-      setSearchVisible(true);
-      searchProgress.value = 0;
-      searchProgress.value = withTiming(1, { duration: 250 });
-    } else {
-      setSearchQuery("");
-      setSearchVisible(false);
-      searchProgress.value = 0;
-    }
-  }
-
-  const searchAnimStyle = useAnimatedStyle(() => ({
-    width: `${searchProgress.value * 100}%` as any,
-  }));
+  const onlineContacts = useMemo(() => contacts.filter((c) => (c as any).isOnline), [contacts]);
+  const unreadCount = useMemo(() => (notifications ?? []).filter((n) => !n.read).length, [notifications]);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -292,18 +320,23 @@ export default function DashboardScreen() {
       return next;
     });
     toggleFavorite.mutate(id);
+    Haptics.selectionAsync();
   }
 
-  const filteredContacts = contacts.filter((c) => {
-    if (searchQuery && !c.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    if (filter === "online") return (c as any).isOnline;
-    if (filter === "offline") return !(c as any).isOnline;
-    if (filter === "favorites") return favorites.has(c.id);
-    if (filter === "recent") return !!(c as any).lastSeen;
-    if (filter === "high") return ((c as any).sessionCount ?? 0) >= 5;
-    if (filter === "never") return !(c as any).lastSeen && !(c as any).isOnline;
-    return true;
-  });
+  const filteredContacts = useMemo(
+    () =>
+      contacts.filter((c) => {
+        if (searchQuery && !c.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+        if (filter === "online") return (c as any).isOnline;
+        if (filter === "offline") return !(c as any).isOnline;
+        if (filter === "favorites") return favorites.has(c.id);
+        if (filter === "recent") return !!(c as any).lastSeen;
+        if (filter === "high") return ((c as any).sessionCount ?? 0) >= 5;
+        if (filter === "never") return !(c as any).lastSeen && !(c as any).isOnline;
+        return true;
+      }),
+    [contacts, searchQuery, filter, favorites]
+  );
 
   const renderContact = useCallback(
     ({ item }: { item: Contact }) => (
@@ -317,6 +350,8 @@ export default function DashboardScreen() {
     [favorites]
   );
 
+  const numColumns = isWide ? 2 : 1;
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
@@ -327,129 +362,108 @@ export default function DashboardScreen() {
         style={[styles.header, { paddingTop: topPad + spacing.sm }]}
       >
         <View style={styles.headerRow}>
-          {searchVisible ? (
-            <Animated.View style={[styles.searchExpanded, searchAnimStyle]}>
-              <Ionicons name="search" size={18} color={colors.headerText + "B3"} />
-              <TextInput
-                autoFocus
-                style={[styles.searchInput, { color: colors.headerText }]}
-                placeholder="Search contacts..."
-                placeholderTextColor={colors.headerText + "80"}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                accessibilityLabel="Search contacts"
-              />
-              <TouchableOpacity
-                onPress={toggleSearch}
-                accessibilityLabel="Close search"
-                accessibilityRole="button"
-              >
-                <Ionicons name="close" size={18} color={colors.headerText + "B3"} />
-              </TouchableOpacity>
-            </Animated.View>
-          ) : (
-            <>
-              <View>
-                <Text style={[typography.caption, { color: colors.headerText + "BF" }]}>
-                  Welcome back
-                </Text>
-                <Text style={[typography.h3, { color: colors.headerText }]}>
-                  {user?.username ?? "WaTracker"}
-                </Text>
-              </View>
-              <View style={styles.headerIcons}>
-                <TouchableOpacity
-                  style={styles.iconBtn}
-                  onPress={toggleSearch}
-                  accessibilityLabel="Search contacts"
-                  accessibilityRole="button"
-                >
-                  <Ionicons name="search-outline" size={22} color={colors.headerText} />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.iconBtn, { position: "relative" }]}
-                  onPress={() => router.push("/(tabs)/notifications")}
-                  accessibilityLabel={`Notifications, ${unreadCount} unread`}
-                  accessibilityRole="button"
-                >
-                  <Ionicons name="notifications-outline" size={22} color={colors.headerText} />
-                  {unreadCount > 0 && (
-                    <View style={[styles.notifBadge, { backgroundColor: colors.danger }]}>
-                      <BadgeCount count={unreadCount} />
-                    </View>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.iconBtn}
-                  onPress={() => router.push("/family-dashboard")}
-                  accessibilityLabel="Family dashboard"
-                  accessibilityRole="button"
-                >
-                  <Ionicons name="people-outline" size={22} color={colors.headerText} />
-                </TouchableOpacity>
-              </View>
-            </>
+          <View style={{ flex: 1 }}>
+            <Text style={[typography.caption, { color: "rgba(255,255,255,0.7)" }]}>Welcome back</Text>
+            <Text style={[typography.h3, { color: "#fff" }]}>{user?.username ?? "WaTracker"}</Text>
+          </View>
+          <View style={styles.headerIcons}>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => router.push("/(tabs)/notifications")}
+              accessibilityLabel={`Notifications, ${unreadCount} unread`}
+              accessibilityRole="button"
+            >
+              <Ionicons name="notifications-outline" size={22} color="#fff" />
+              {unreadCount > 0 && (
+                <View style={[styles.notifBadge, { backgroundColor: colors.danger }]}>
+                  <BadgeCount count={unreadCount} />
+                </View>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => router.push("/family-dashboard")}
+              accessibilityLabel="Family dashboard"
+              accessibilityRole="button"
+            >
+              <Ionicons name="people-outline" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Search bar */}
+        <View style={[styles.searchBar, { backgroundColor: "rgba(255,255,255,0.15)" }]}>
+          <Ionicons name="search" size={17} color="rgba(255,255,255,0.7)" />
+          <TextInput
+            style={[styles.searchInput, { color: "#fff" }]}
+            placeholder="Search contacts..."
+            placeholderTextColor="rgba(255,255,255,0.5)"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            accessibilityLabel="Search contacts"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Ionicons name="close-circle" size={17} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
           )}
         </View>
 
+        {/* Stats row */}
         <View style={styles.statsRow}>
-          <View style={styles.miniStat}>
-            <Text style={[typography.h2, { color: colors.headerText }]}>{contacts.length}</Text>
-            <Text style={[typography.small, { color: colors.headerText + "BF" }]}>Tracked</Text>
-          </View>
+          <StatCard label="Tracked" value={contacts.length} icon="people" accent={colors.primary} />
           <View style={styles.statDivider} />
-          <View style={styles.miniStat}>
-            <Text style={[typography.h2, { color: colors.headerText }]}>{onlineContacts.length}</Text>
-            <Text style={[typography.small, { color: colors.headerText + "BF" }]}>Online Now</Text>
-          </View>
+          <StatCard label="Online Now" value={onlineContacts.length} icon="radio-button-on" accent={colors.primary} />
           <View style={styles.statDivider} />
-          <View style={styles.miniStat}>
-            <Text style={[typography.h2, { color: colors.headerText }]}>{unreadCount}</Text>
-            <Text style={[typography.small, { color: colors.headerText + "BF" }]}>Alerts</Text>
-          </View>
+          <StatCard label="Alerts" value={unreadCount} icon="notifications" accent={colors.danger} />
         </View>
       </LinearGradient>
 
+      {/* Filter chips */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         style={[styles.chipRow, { backgroundColor: colors.surface }]}
         contentContainerStyle={{ paddingHorizontal: spacing.base, gap: spacing.sm, paddingVertical: spacing.sm }}
       >
-        {FILTERS.map((f) => (
-          <TouchableOpacity
-            key={f.key}
-            style={[
-              styles.chip,
-              {
-                backgroundColor: filter === f.key ? colors.primary : colors.card,
-                borderColor: filter === f.key ? colors.primary : colors.border,
-              },
-            ]}
-            onPress={() => {
-              Haptics.selectionAsync();
-              setFilter(f.key);
-            }}
-            accessibilityLabel={`Filter by ${f.label}`}
-            accessibilityRole="button"
-            accessibilityState={{ selected: filter === f.key }}
-          >
-            <Text
+        {FILTERS.map((f) => {
+          const active = filter === f.key;
+          return (
+            <TouchableOpacity
+              key={f.key}
               style={[
-                typography.caption,
-                { color: filter === f.key ? colors.headerText : colors.secondaryText },
+                styles.chip,
+                {
+                  backgroundColor: active ? colors.primary : colors.card,
+                  borderColor: active ? colors.primary : colors.border,
+                },
               ]}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setFilter(f.key);
+              }}
+              accessibilityLabel={`Filter by ${f.label}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
             >
-              {f.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              <Ionicons
+                name={f.icon as any}
+                size={13}
+                color={active ? "#fff" : colors.secondaryText}
+              />
+              <Text style={[typography.caption, { color: active ? "#fff" : colors.secondaryText }]}>
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
 
+      {/* Quick Actions */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={[styles.quickActionsRow, { backgroundColor: colors.background }]}
+        style={[{ backgroundColor: colors.background, flexGrow: 0 }]}
         contentContainerStyle={{ paddingHorizontal: spacing.base, gap: spacing.sm, paddingVertical: spacing.sm }}
       >
         {QUICK_ACTIONS.map((a) => (
@@ -460,7 +474,9 @@ export default function DashboardScreen() {
             accessibilityLabel={a.label}
             accessibilityRole="button"
           >
-            <Ionicons name={a.icon} size={15} color={colors.primary} />
+            <View style={[styles.quickIcon, { backgroundColor: a.color + "20" }]}>
+              <Ionicons name={a.icon} size={14} color={a.color} />
+            </View>
             <Text style={[typography.caption, { color: colors.text }]}>{a.label}</Text>
           </TouchableOpacity>
         ))}
@@ -470,6 +486,9 @@ export default function DashboardScreen() {
         data={filteredContacts}
         keyExtractor={(item) => String(item.id)}
         renderItem={renderContact}
+        numColumns={numColumns}
+        key={numColumns}
+        columnWrapperStyle={isWide ? { gap: spacing.sm } : undefined}
         contentContainerStyle={{
           paddingHorizontal: spacing.base,
           paddingTop: spacing.sm,
@@ -483,22 +502,33 @@ export default function DashboardScreen() {
         ListEmptyComponent={
           isLoading ? (
             <View style={{ gap: spacing.sm }}>
-              {Array.from({ length: 4 }).map((_, i) => (
-                <SkeletonLoader key={i} width="100%" height={68} borderRadius={12} />
+              {Array.from({ length: 5 }).map((_, i) => (
+                <SkeletonLoader key={i} width="100%" height={72} borderRadius={12} />
               ))}
             </View>
           ) : (
             <EmptyState
               icon="person-add-outline"
-              title="No contacts tracked"
-              subtitle="Tap the + button to add your first contact to monitor"
+              title={searchQuery ? "No contacts found" : "No contacts tracked"}
+              subtitle={
+                searchQuery
+                  ? `No contacts match "${searchQuery}"`
+                  : "Tap the + button to add your first contact to monitor"
+              }
             />
           )
         }
       />
 
       <TouchableOpacity
-        style={[styles.fab, { backgroundColor: colors.primary, bottom: (Platform.OS === "web" ? 80 : insets.bottom + 80), shadowColor: colors.shadow }]}
+        style={[
+          styles.fab,
+          {
+            backgroundColor: colors.primary,
+            bottom: Platform.OS === "web" ? 100 : insets.bottom + 88,
+            shadowColor: colors.shadow,
+          },
+        ]}
         onPress={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           setAddSheetVisible(true);
@@ -507,7 +537,7 @@ export default function DashboardScreen() {
         accessibilityLabel="Add new contact"
         accessibilityRole="button"
       >
-        <Ionicons name="add" size={28} color={colors.headerText} />
+        <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
 
       <AddContactSheet visible={addSheetVisible} onClose={() => setAddSheetVisible(false)} />
@@ -518,7 +548,7 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   header: {
     paddingHorizontal: spacing.base,
-    paddingBottom: spacing.xl,
+    paddingBottom: spacing.base,
     borderBottomLeftRadius: 20,
     borderBottomRightRadius: 20,
   },
@@ -527,62 +557,85 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     minHeight: 48,
-    paddingBottom: spacing.base,
+    marginBottom: spacing.sm,
   },
   headerIcons: { flexDirection: "row", gap: 4 },
   iconBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   notifBadge: { position: "absolute", top: 4, right: 4, borderRadius: 8 },
-  searchExpanded: {
+  searchBar: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
-    backgroundColor: "rgba(255,255,255,0.15)",
     borderRadius: 20,
     paddingHorizontal: spacing.base,
-    paddingVertical: 8,
-    overflow: "hidden",
+    paddingVertical: 9,
+    marginBottom: spacing.base,
   },
   searchInput: {
     flex: 1,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
-    paddingVertical: 2,
+    paddingVertical: 0,
   },
   statsRow: {
     flexDirection: "row",
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderRadius: 12,
-    padding: spacing.base,
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderRadius: 14,
+    padding: spacing.sm,
+    gap: 0,
   },
-  miniStat: { flex: 1, alignItems: "center" },
-  statDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.3)" },
+  statCard: {
+    flex: 1,
+    alignItems: "center",
+    gap: 3,
+    paddingVertical: spacing.xs,
+  },
+  statIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 2,
+  },
+  statDivider: { width: 1, height: 48, backgroundColor: "rgba(255,255,255,0.25)" },
   chipRow: { flexGrow: 0 },
   chip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  quickActionsRow: { flexGrow: 0 },
-  quickPill: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 4,
     paddingHorizontal: spacing.md,
     paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1,
   },
+  quickPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  quickIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   contactCard: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     padding: spacing.base,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
     gap: spacing.md,
   },
-  contactLeft: {},
-  contactInfo: { flex: 1, gap: 2 },
+  contactInfo: { flex: 1, gap: 3 },
   contactRight: { alignItems: "center", gap: 2 },
   fab: {
     position: "absolute",
@@ -594,7 +647,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowRadius: 10,
     elevation: 8,
   },
   overlay: {
@@ -629,7 +682,7 @@ const styles = StyleSheet.create({
   },
   sheetInput: {
     padding: spacing.md,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     fontSize: 15,
     fontFamily: "Inter_400Regular",
@@ -641,7 +694,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: spacing.sm,
     padding: spacing.base,
-    borderRadius: 10,
+    borderRadius: 12,
     marginTop: spacing.sm,
   },
   sheetBtnText: {

@@ -28,7 +28,7 @@ router.get("/conversations", async (req: AuthRequest, res) => {
         id: conversationsTable.id,
         contactId: conversationsTable.contactId,
         lastMessage: conversationsTable.lastMessage,
-        lastMessageAt: conversationsTable.lastMessageAt,
+        lastMessageTime: conversationsTable.lastMessageAt,
         unreadCount: conversationsTable.unreadCount,
         contactName: contactsTable.name,
         contactPhone: contactsTable.phoneNumber,
@@ -78,9 +78,9 @@ router.get("/view-once", async (req: AuthRequest, res) => {
       .select({
         id: viewOnceMediaTable.id,
         contactId: viewOnceMediaTable.contactId,
-        mediaType: viewOnceMediaTable.mediaType,
+        type: viewOnceMediaTable.mediaType,
         url: viewOnceMediaTable.url,
-        capturedAt: viewOnceMediaTable.capturedAt,
+        recoveredAt: viewOnceMediaTable.capturedAt,
         contactName: contactsTable.name,
       })
       .from(viewOnceMediaTable)

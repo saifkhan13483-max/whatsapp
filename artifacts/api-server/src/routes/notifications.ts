@@ -22,7 +22,7 @@ router.get("/", async (req: AuthRequest, res) => {
       .orderBy(desc(notificationsTable.createdAt))
       .limit(Number(limit))
       .offset(offset);
-    res.json(items);
+    res.json(items.map((n) => ({ ...n, read: n.isRead })));
   } catch {
     res.status(500).json({ error: "Failed to fetch notifications" });
   }
