@@ -19,6 +19,8 @@ import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/providers/AuthProvider";
 import { useTheme } from "@/providers/ThemeProvider";
+import { useWhatsAppConnection } from "@/hooks/useWhatsAppConnection";
+import { ConnectionStatusCard } from "@/components/ui/ConnectionStatusCard";
 import {
   useSettings,
   useUpdateSettings,
@@ -137,6 +139,14 @@ export default function SettingsScreen() {
     setAutoLockSeconds,
   } = useBiometricLock();
 
+  const {
+    connectionStatus,
+    disconnect: disconnectWhatsApp,
+    isDisconnecting,
+    reconnect: reconnectWhatsApp,
+    isReconnecting,
+  } = useWhatsAppConnection();
+
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   const [avatarColor, setAvatarColor] = useState(AVATAR_COLORS[0]);
@@ -246,6 +256,36 @@ export default function SettingsScreen() {
           last
         />
       </SectionCard>
+
+      {/* WHATSAPP CONNECTION */}
+      <SectionTitle title="WhatsApp Connection" icon="logo-whatsapp" />
+      <View style={{ marginBottom: 4 }}>
+        <ConnectionStatusCard
+          status={connectionStatus?.status ?? "not_connected"}
+          phoneNumber={connectionStatus?.phoneNumber}
+          connectedAt={connectionStatus?.connectedAt}
+          onConnect={() => router.push("/connect-whatsapp")}
+          onContinueSetup={() => router.push("/connect-whatsapp")}
+          onDisconnect={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+            Alert.alert(
+              "Disconnect WhatsApp",
+              "Are you sure you want to unlink your WhatsApp account?",
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Disconnect",
+                  style: "destructive",
+                  onPress: () => disconnectWhatsApp(),
+                },
+              ]
+            );
+          }}
+          onReconnect={() => reconnectWhatsApp()}
+          isDisconnecting={isDisconnecting}
+          isReconnecting={isReconnecting}
+        />
+      </View>
 
       {/* SUBSCRIPTION */}
       <SectionTitle title="Subscription" icon="diamond" />

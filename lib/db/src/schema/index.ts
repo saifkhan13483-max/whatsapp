@@ -168,6 +168,24 @@ export const keywordAlertsTable = pgTable("keyword_alerts", {
 
 export type KeywordAlert = typeof keywordAlertsTable.$inferSelect;
 
+export const whatsappSessionsTable = pgTable("whatsapp_sessions", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }).unique(),
+  phoneNumber: varchar("phone_number", { length: 20 }),
+  maskedPhone: varchar("masked_phone", { length: 25 }),
+  status: varchar("status", { length: 20 }).default("pending_pairing").notNull(),
+  pairingCode: varchar("pairing_code", { length: 10 }),
+  pairingCodeExpiresAt: timestamp("pairing_code_expires_at"),
+  sessionData: text("session_data"),
+  connectedAt: timestamp("connected_at"),
+  lastActiveAt: timestamp("last_active_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type WhatsappSession = typeof whatsappSessionsTable.$inferSelect;
+export type InsertWhatsappSession = typeof whatsappSessionsTable.$inferInsert;
+
 export const geofenceZonesTable = pgTable("geofence_zones", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),

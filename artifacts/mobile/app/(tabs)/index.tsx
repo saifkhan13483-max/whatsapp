@@ -27,6 +27,7 @@ import Animated, {
 import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/useColors";
+import { useWhatsAppConnection } from "@/hooks/useWhatsAppConnection";
 import { useContacts, useAddContact, useToggleFavorite } from "@/hooks/useContacts";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useAuth } from "@/providers/AuthProvider";
@@ -293,6 +294,9 @@ export default function DashboardScreen() {
   const { user } = useAuth();
   const isWide = width >= 768;
 
+  const { connectionStatus } = useWhatsAppConnection();
+  const waConnected = connectionStatus?.status === "connected";
+
   const { data: contacts = [], isLoading, refetch } = useContacts();
   const { data: notifications = [] } = useNotifications();
   const toggleFavorite = useToggleFavorite();
@@ -418,6 +422,23 @@ export default function DashboardScreen() {
           <StatCard label="Alerts" value={unreadCount} icon="notifications" accent={colors.danger} />
         </View>
       </LinearGradient>
+
+      {/* WhatsApp not-connected banner */}
+      {!waConnected && (
+        <TouchableOpacity
+          style={[styles.waBanner]}
+          onPress={() => router.push("/connect-whatsapp")}
+          activeOpacity={0.85}
+          accessibilityLabel="WhatsApp not connected, tap to set up"
+          accessibilityRole="button"
+        >
+          <Ionicons name="alert-circle" size={18} color="#1a1a1a" />
+          <Text style={[typography.bodyMedium, { color: "#1a1a1a", flex: 1 }]}>
+            WhatsApp not connected — Tap to set up
+          </Text>
+          <Feather name="chevron-right" size={16} color="#1a1a1a" />
+        </TouchableOpacity>
+      )}
 
       {/* Filter chips */}
       <ScrollView
@@ -637,6 +658,14 @@ const styles = StyleSheet.create({
   },
   contactInfo: { flex: 1, gap: 3 },
   contactRight: { alignItems: "center", gap: 2 },
+  waBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.base,
+    paddingVertical: 10,
+    backgroundColor: "#FFC107",
+  },
   fab: {
     position: "absolute",
     right: spacing.xl,

@@ -10,6 +10,7 @@ import settingsRouter from "./settings.js";
 import activityRouter from "./activity.js";
 import alertsRouter from "./alerts.js";
 import geofenceRouter from "./geofence.js";
+import whatsappRouter from "./whatsapp.js";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use("/settings", settingsRouter);
 router.use("/activity", activityRouter);
 router.use("/alerts", alertsRouter);
 router.use("/geofence", geofenceRouter);
+router.use("/whatsapp", whatsappRouter);
 
 export default router;

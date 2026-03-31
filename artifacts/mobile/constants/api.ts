@@ -58,4 +58,11 @@ export const API = {
   GEOFENCE: {
     ZONES: "/geofence/zones",
   },
+  WHATSAPP: {
+    REQUEST_PAIRING_CODE: "/whatsapp/request-pairing-code",
+    CONNECTION_STATUS: "/whatsapp/connection-status",
+    PAIRING_CODE_STATUS: "/whatsapp/pairing-code-status",
+    DISCONNECT: "/whatsapp/disconnect",
+    RECONNECT: "/whatsapp/reconnect",
+  },
 } as const;
