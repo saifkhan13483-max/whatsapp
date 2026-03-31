@@ -57,13 +57,15 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "@react-navigation/native": "^7.2.2",
     "date-fns": "^3.6.0",
     "expo-clipboard": "^8.0.8",
-    "expo-file-system": "^55.0.12",
+    "expo-file-system": "~19.0.21",
     "expo-local-authentication": "~17.0.8",
     "expo-notifications": "~0.32.16",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
-    "react-native-toast-message": "^2.3.3"
+    "react-native-toast-message": "^2.3.3",
+    "stacktrace-parser": "^0.1.10"
   }
 }

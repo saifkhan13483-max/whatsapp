@@ -14,7 +14,6 @@ import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons, Feather } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Sharing from "expo-sharing";
-import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/useColors";
@@ -32,6 +31,14 @@ import { typography } from "@/constants/typography";
 import { spacing } from "@/constants/spacing";
 import { formatDuration, formatHour } from "@/lib/formatters";
 import { format } from "date-fns";
+
+type _FileSystemLegacy = {
+  cacheDirectory: string | null;
+  writeAsStringAsync: (uri: string, contents: string, options?: { encoding?: string }) => Promise<void>;
+  EncodingType: { Base64: string; UTF8: string };
+};
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const FileSystem = require("expo-file-system/legacy") as _FileSystemLegacy;
 
 const RANGE_OPTIONS = [
   { label: "Today", value: "today" },
@@ -121,7 +128,7 @@ export default function ReportsScreen() {
       reader.onload = async () => {
         const base64 = (reader.result as string).split(",")[1];
         const uri = (FileSystem.cacheDirectory ?? "") + `report-${activeId}-${Date.now()}.csv`;
-        await FileSystem.writeAsStringAsync(uri, base64!, { encoding: FileSystem.EncodingType.Base64 });
+        await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
         await Sharing.shareAsync(uri, { mimeType: "text/csv", dialogTitle: "Export Activity Report" });
       };
       reader.readAsDataURL(blob);
