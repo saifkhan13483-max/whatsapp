@@ -1,0 +1,495 @@
+FEATURE ADDITION: WhatsApp Pairing Code Connection Flow
+Target App: WaTracker Pro v2.0 (existing Expo SDK 54 + React Native + TypeScript project)
+
+═══════════════════════════════════════════════════════════════════
+IMPORTANT RULES (inherit from original project):
+═══════════════════════════════════════════════════════════════════
+- Do NOT modify any existing screen unless explicitly listed below
+- Do NOT hardcode hex colors — always use useColors() from constants/colors.ts
+- Do NOT install any new charting library
+- Do NOT use emojis — only @expo/vector-icons (Ionicons, Feather, MaterialCommunityIcons)
+- Do NOT hardcode localhost — always use getApiUrl() from @/lib/query-client
+- All fetch calls must include credentials: 'include'
+- All animations must use react-native-reanimated v4 only
+- All new API calls must gracefully handle 404/500 with fallback UI
+- All screens must use useSafeAreaInsets() — zero hardcoded padding
+- Follow the phased plan below — do NOT combine phases
+
+Before writing any code for each phase:
+1. Describe your understanding of the requirements
+2. List files you will CREATE or MODIFY
+3. Identify risks to existing functionality
+4. Propose a step-by-step implementation plan
+5. Wait for confirmation before proceeding
+
+═══════════════════════════════════════════════════════════════════
+SECTION 1: FEATURE OVERVIEW
+═══════════════════════════════════════════════════════════════════
+
+This feature allows users to link their WhatsApp account to WaTracker using
+WhatsApp's official "Link with Phone Number" (Pairing Code) method — the same
+mechanism used by WhatsApp Web/Desktop. No QR code scan is needed. Instead:
+
+1. User opens the "Connect WhatsApp" flow inside WaTracker
+2. WaTracker backend requests a pairing code from WhatsApp's servers
+   by submitting the user's phone number
+3. WhatsApp generates an 8-character alphanumeric one-time pairing code
+4. WaTracker displays this code prominently on screen
+5. User opens their WhatsApp app → Settings → Linked Devices →
+   Link a Device → "Link with phone number instead"
+6. User enters the 8-character code shown in WaTracker
+7. WhatsApp confirms the pairing — WaTracker backend receives a
+   valid session/token and stores it securely
+8. WaTracker is now registered as a companion/linked device and can
+   monitor online status changes, contacts, and activity
+
+This uses WhatsApp's official Multi-Device (MD) architecture.
+The backend should use the Baileys library (WhiskeySockets/Baileys)
+or a compatible WhatsApp Web reverse-engineered client that supports
+pairing code linking.
+
+═══════════════════════════════════════════════════════════════════
+SECTION 2: NEW BACKEND API ENDPOINTS (add to existing Express backend)
+═══════════════════════════════════════════════════════════════════
+
+All endpoints are authenticated (require valid JWT cookie).
+
+POST /api/whatsapp/request-pairing-code
+  Body: { phoneNumber: string }  — E.164 format e.g. "+923001234567"
+  Action: Initializes a Baileys WhatsApp client session for this user,
+          requests a pairing code for the given phone number
+  Response: { pairingCode: string, expiresAt: string (ISO timestamp) }
+  Error cases:
+    - 400: invalid phone number format
+    - 409: WhatsApp already linked for this user
+    - 429: too many requests (rate limit: max 3 attempts per 10 minutes)
+    - 500: WhatsApp server error
+
+GET /api/whatsapp/connection-status
+  Response: {
+    status: 'not_connected' | 'pending_pairing' | 'connected' | 'disconnected',
+    phoneNumber?: string,       — masked e.g. "+92 300 ***4567"
+    connectedAt?: string,       — ISO timestamp
+    pairingCode?: string,       — only present when status = 'pending_pairing'
+    pairingCodeExpiresAt?: string
+  }
+
+POST /api/whatsapp/disconnect
+  Action: Logs out the WhatsApp linked device session, clears stored credentials
+  Response: { success: true }
+
+GET /api/whatsapp/pairing-code-status
+  Action: Polls whether the pairing code has been accepted by WhatsApp
+  Response: {
+    accepted: boolean,
+    status: 'waiting' | 'accepted' | 'expired' | 'error'
+  }
+
+POST /api/whatsapp/reconnect
+  Action: Attempts to restore a previously linked session from stored credentials
+  Response: { status: 'connected' | 'failed' }
+
+═══════════════════════════════════════════════════════════════════
+SECTION 3: NEW FRONTEND FILES TO CREATE
+═══════════════════════════════════════════════════════════════════
+
+app/
+  connect-whatsapp.tsx           → Full connection flow screen (multi-step)
+
+components/ui/
+  PairingCodeDisplay.tsx         → Displays the 8-character code with styling
+  ConnectionStatusCard.tsx       → Shows current WhatsApp link status
+  StepIndicator.tsx              → Visual step progress (Step 1 of 3)
+  PhoneInputField.tsx            → International phone number input with country picker
+
+hooks/
+  useWhatsAppConnection.ts       → All connection state, mutations, polling logic
+
+constants/api.ts                 → ADD new endpoint constants (do not remove existing)
+
+═══════════════════════════════════════════════════════════════════
+SECTION 4: FILES TO MODIFY
+═══════════════════════════════════════════════════════════════════
+
+app/(tabs)/settings.tsx
+  → ADD a new "WHATSAPP CONNECTION" section between SECURITY and SUBSCRIPTION
+  → Shows ConnectionStatusCard component
+  → If not connected: "Connect WhatsApp" button → navigates to connect-whatsapp.tsx
+  → If connected: phone number (masked), connected date, "Disconnect" button
+
+app/(tabs)/index.tsx (Dashboard)
+  → ADD a non-dismissible banner at the top IF WhatsApp is not connected:
+    "WhatsApp not connected — Tap to set up" with a warning (alert-circle) icon
+    Banner color: warning (#FFC107 background, dark text)
+    Tapping banner navigates to connect-whatsapp.tsx
+  → If connected: banner is hidden
+
+═══════════════════════════════════════════════════════════════════
+SECTION 5: SCREEN SPECIFICATION — connect-whatsapp.tsx
+═══════════════════════════════════════════════════════════════════
+
+This is a STACK screen (not a tab). Navigation: push from Settings or Dashboard banner.
+
+Header:
+- Back button (chevron-left, Feather icon)
+- Title: "Connect WhatsApp" (H3, centered)
+- NO right-side icons
+
+The screen has 3 steps managed by local state (currentStep: 1 | 2 | 3).
+Use a StepIndicator component at the top showing Step X of 3.
+Animate step transitions with reanimated FadeIn/FadeOut (opacity 0→1, duration 300ms).
+
+────────────────────────────────
+STEP 1: Enter Phone Number
+────────────────────────────────
+
+Title: "Enter Your WhatsApp Number" (H2, centered)
+Subtitle: "This is the phone number registered on your WhatsApp account" (Body, secondary text, centered)
+
+Illustration area (pure Views — NOT an image):
+- A large rounded square (80px, border radius 20, primary green background)
+- Smartphone icon (Ionicons: phone-portrait-outline, 40px, white) centered inside
+
+PhoneInputField component:
+- Country code selector button on the left (shows flag emoji + dial code e.g. "+92")
+  - Tap opens a searchable FlatList modal of all countries with dial codes
+  - Countries list is a local JS array — NOT from API
+  - Search input at top of modal filters by country name or dial code
+- Phone number TextInput on the right
+- Placeholder: "300 1234567"
+- keyboardType: 'phone-pad'
+- Input validation:
+  - Must be at least 7 digits after country code
+  - Remove all non-numeric characters before validation
+  - Show inline error below input: "Please enter a valid phone number"
+- Border: default = colors.border, focus = colors.primary, error = colors.danger
+- Border radius: 8
+
+Important notes text (styled info box, light blue background, info icon):
+"Your phone number is only used to generate a pairing code.
+WaTracker never stores your full phone number."
+
+"Get Pairing Code" button:
+- Full width, green, border radius 8
+- Disabled + 0.5 opacity while loading
+- Shows ActivityIndicator (white) while POST /api/whatsapp/request-pairing-code is running
+- On success → advance to Step 2
+- On error → show react-native-toast-message red toast with error message
+- Haptic: Impact Medium on success
+
+────────────────────────────────
+STEP 2: Enter Code in WhatsApp
+────────────────────────────────
+
+Title: "Enter This Code in WhatsApp" (H2, centered)
+Subtitle: "Open WhatsApp on your phone and follow the steps below" (Body, secondary, centered)
+
+PairingCodeDisplay component:
+- Displays the 8-character code in a large, styled box
+- Each character in its own individual rounded cell (40px × 52px, border radius 8)
+- Characters split into 2 groups of 4 with a dash separator (e.g. "A3BX - K9PZ")
+- Character cells: dark surface background, primary green border
+- Character text: Inter_700Bold, 28px, primary green color
+- "Copy Code" button below (outlined, Feather copy icon) — copies full code to clipboard
+  via Clipboard from @react-native-clipboard/clipboard or expo-clipboard
+  — shows brief "Copied!" confirmation text fade-in below button
+- Countdown timer: "Code expires in 02:34" — counts down from expiry time
+  Uses useEffect + setInterval, updates every second
+  When < 30 seconds: timer text turns danger red + shake animation (reanimated)
+  When expired: shows "Code Expired" in red + "Request New Code" button (outlined green)
+  Requesting new code resets timer and generates new code via POST /api/whatsapp/request-pairing-code
+
+Step-by-step visual instructions below the code:
+3 instruction rows, each with: numbered circle (primary green bg, white number) + instruction text
+
+Row 1: "1" → "Open WhatsApp on your phone"
+Row 2: "2" → "Go to Settings → Linked Devices → Link a Device"
+Row 3: "3" → "Tap 'Link with phone number instead' and enter the code above"
+
+Each row has a Feather icon on the far right:
+Row 1: smartphone icon
+Row 2: settings icon
+Row 3: key icon
+
+Polling Logic (useWhatsAppConnection hook):
+- While on Step 2, poll GET /api/whatsapp/pairing-code-status every 3 seconds
+- Use React Query's refetchInterval: 3000
+- When status === 'accepted' → stop polling → advance to Step 3 with success animation
+- When status === 'expired' → stop polling → show expiry state (described above)
+- When status === 'error' → stop polling → show error toast + "Try Again" button
+
+"I'll do this later" text button at the bottom:
+- Goes back to previous screen
+- Triggers Alert.alert: "Are you sure? The code will expire." with Cancel / Yes buttons
+
+────────────────────────────────
+STEP 3: Connection Successful
+────────────────────────────────
+
+This step is shown ONLY after polling confirms pairing was accepted.
+
+Entry animation: entire step content fades in + slides up 20px (reanimated: translateY + opacity)
+
+Success illustration (pure Views):
+- Large circle (120px diameter) with primary green background
+- Inside: checkmark icon (Ionicons: checkmark-outline, 64px, white)
+- AnimatedRing: glowing green ring pulses outward and fades (scale 1→1.6, opacity 1→0, repeat 2 times, duration 800ms each)
+
+Title: "WhatsApp Connected!" (H1, primary green, centered)
+Subtitle: "WaTracker is now monitoring your WhatsApp activity" (Body, secondary, centered)
+
+Info card (surface background, border radius 12, shadow in light mode):
+- Connected phone number (masked): "+92 300 ***4567"
+- Connected at: relative time "Just now"
+- Device label: "WaTracker Pro (Linked Device)"
+
+"Go to Dashboard" button:
+- Full width, green
+- Navigates to (tabs)/index
+- Haptic: Impact Heavy
+
+"View Settings" outlined button below:
+- Navigates back to Settings, scrolls to WhatsApp Connection section
+
+═══════════════════════════════════════════════════════════════════
+SECTION 6: COMPONENT SPECIFICATIONS
+═══════════════════════════════════════════════════════════════════
+
+────────────────────────────────
+PairingCodeDisplay.tsx
+────────────────────────────────
+Props:
+  code: string            — 8-char alphanumeric string
+  expiresAt: string       — ISO timestamp
+  onRequestNew: () => void — callback for "Request New Code"
+  isLoadingNew?: boolean  — show spinner on request new button
+
+Behavior: splits code into two groups of 4, renders individual character cells,
+countdown timer, copy functionality, expiry handling (all described in Step 2 above)
+
+────────────────────────────────
+ConnectionStatusCard.tsx
+────────────────────────────────
+Props:
+  status: 'not_connected' | 'pending_pairing' | 'connected' | 'disconnected'
+  phoneNumber?: string
+  connectedAt?: string
+  onConnect: () => void
+  onDisconnect: () => void
+  isDisconnecting?: boolean
+
+Renders differently based on status:
+- not_connected: grey/muted card, unlink icon (Feather: link-off), "Not Connected" text,
+  "Connect Now" green button
+- pending_pairing: yellow/warning card, clock icon, "Pairing in Progress..." text,
+  "Continue Setup" outlined button (navigates to connect-whatsapp.tsx)
+- connected: green-tinted card (primary green at 0.1 opacity), checkmark icon,
+  masked phone number, "Connected since X" caption,
+  "Disconnect" outlined danger button
+- disconnected: red-tinted card, alert-circle icon, "Connection Lost" text,
+  "Reconnect" button (calls POST /api/whatsapp/reconnect)
+
+────────────────────────────────
+StepIndicator.tsx
+────────────────────────────────
+Props:
+  currentStep: number
+  totalSteps: number
+  labels?: string[]   — optional step labels
+
+Renders: horizontal row of circles connected by lines
+- Completed steps: filled green circle with checkmark icon
+- Current step: filled green circle with step number, subtle pulsing shadow
+- Upcoming steps: grey outlined circle with step number
+- Connecting lines: green for completed segments, grey for upcoming
+- Optional labels below each circle (Caption size)
+
+────────────────────────────────
+PhoneInputField.tsx
+────────────────────────────────
+Props:
+  value: string
+  onChangeText: (text: string) => void
+  onCountryChange: (country: { code: string, dialCode: string, name: string }) => void
+  selectedCountry: { code: string, dialCode: string, name: string }
+  error?: string
+  disabled?: boolean
+
+Country list: local array of top 20 most common countries first, then alphabetically.
+Each entry: { code: 'PK', dialCode: '+92', name: 'Pakistan', flag: 'PK' }
+Flag display: use country code letters as 2-char text inside a small colored square
+(do NOT use emoji flags — use text abbreviation styled as a badge instead)
+
+Modal: full-screen modal with:
+- Header "Select Country" + close button (Feather X icon)
+- SearchBar component (already exists) at top
+- FlatList of country rows: flag badge + country name + dial code (right-aligned)
+- Currently selected country has green checkmark on right
+
+═══════════════════════════════════════════════════════════════════
+SECTION 7: useWhatsAppConnection HOOK
+═══════════════════════════════════════════════════════════════════
+
+File: hooks/useWhatsAppConnection.ts
+
+Responsibilities:
+- Query: GET /api/whatsapp/connection-status (staleTime: 30000, refetchOnFocus: true)
+- Mutation: requestPairingCode(phoneNumber: string) — POST /api/whatsapp/request-pairing-code
+  On success: invalidates connection-status query, returns { pairingCode, expiresAt }
+  On error: throws with parsed error message
+- Query: pollPairingStatus() — GET /api/whatsapp/pairing-code-status
+  refetchInterval: controlled externally (3000 when polling is active, false otherwise)
+  Only enabled when connection status is 'pending_pairing'
+- Mutation: disconnect() — POST /api/whatsapp/disconnect
+  On success: invalidates connection-status query, shows success toast
+  On error: shows error toast
+- Mutation: reconnect() — POST /api/whatsapp/reconnect
+  On success: invalidates connection-status query
+
+Exports:
+  connectionStatus        — data from connection-status query
+  isLoadingStatus         — loading state
+  pairingCodeStatus       — data from poll query
+  requestPairingCode      — mutation function
+  isRequestingCode        — loading state for request mutation
+  disconnect              — mutation function
+  isDisconnecting         — loading state
+  reconnect               — mutation function
+  isReconnecting          — loading state
+  isPolling               — boolean state, set true on Step 2, false on Step 3 or expiry
+  setIsPolling            — setter
+
+All 404 responses from NEW endpoints must be caught and returned as:
+{ status: 'not_connected' } for connection-status
+{ accepted: false, status: 'waiting' } for pairing-code-status
+This ensures the UI degrades gracefully if backend isn't fully built yet.
+
+═══════════════════════════════════════════════════════════════════
+SECTION 8: BACKEND IMPLEMENTATION NOTES
+═══════════════════════════════════════════════════════════════════
+
+Add to existing Express + TypeScript + Drizzle ORM backend (port 3001).
+Do NOT rebuild or restart the server — add new routes to existing router structure.
+
+Database additions (new Drizzle schema table):
+whatsapp_sessions table:
+  id              serial primary key
+  userId          integer references users(id) on delete cascade
+  phoneNumber     varchar(20) — E.164 format, encrypted at rest
+  maskedPhone     varchar(20) — e.g. "+92 300 ***4567"
+  status          varchar(20) — 'pending_pairing' | 'connected' | 'disconnected'
+  pairingCode     varchar(10) — current pairing code
+  pairingCodeExpiresAt  timestamp
+  sessionData     text        — encrypted Baileys session JSON (sensitive)
+  connectedAt     timestamp
+  lastActiveAt    timestamp
+  createdAt       timestamp default now()
+  updatedAt       timestamp default now()
+
+Baileys Integration:
+- Install: @whiskeysockets/baileys
+- Use makeWASocket with { auth: state, printQRInTerminal: false }
+- For pairing code: call sock.requestPairingCode(phoneNumber) after socket initialization
+- Store session credentials using Drizzle (encrypt sessionData field using crypto with APP_SECRET env var)
+- Each user gets their own isolated Baileys socket instance
+- Store active socket instances in a Map<userId, WASocket> in memory
+- On server restart: attempt to restore all connected sessions from database
+
+Session lifecycle:
+- POST /api/whatsapp/request-pairing-code:
+  1. Validate phone number (libphonenumber-js or simple regex)
+  2. Check rate limit (max 3 per 10 min per user, store attempts in memory or Redis)
+  3. Initialize Baileys socket for this user
+  4. Call sock.requestPairingCode(phoneNumber)
+  5. Listen for 'connection.update' event
+  6. Store pairing code + expiry (5 minutes) in whatsapp_sessions table
+  7. Return pairing code to frontend
+
+- GET /api/whatsapp/pairing-code-status:
+  1. Check whatsapp_sessions for this user
+  2. If connection.update fired with isNewLogin = true → status = 'accepted'
+  3. If pairingCodeExpiresAt < now → status = 'expired'
+  4. Otherwise → status = 'waiting'
+
+- On successful pairing (Baileys 'connection.update' with connection = 'open'):
+  1. Update whatsapp_sessions: status = 'connected', connectedAt = now()
+  2. Save Baileys creds to sessionData (encrypted)
+  3. Emit real-time update via Socket.IO or Server-Sent Events (optional, if already set up)
+
+- On disconnection:
+  1. Update status = 'disconnected'
+  2. Attempt auto-reconnect up to 3 times with 5s delay
+  3. After 3 failures, mark as 'disconnected' and notify user
+
+Error handling:
+- If Baileys throws "invalid phone number": return 400
+- If WhatsApp rate-limits the pairing request: return 429 with retry-after header
+- All Baileys errors should be caught and mapped to appropriate HTTP status codes
+
+═══════════════════════════════════════════════════════════════════
+SECTION 9: PHASED IMPLEMENTATION PLAN
+═══════════════════════════════════════════════════════════════════
+
+PHASE 1 — Backend Foundation (Checkpoint after completion)
+  Step 1: Install @whiskeysockets/baileys + libphonenumber-js on backend
+  Step 2: Create whatsapp_sessions Drizzle schema + run migration
+  Step 3: Create WhatsApp session manager service (SessionManager class)
+           — manages Map of active sockets, initialize/destroy methods
+  Step 4: Implement POST /api/whatsapp/request-pairing-code
+  Step 5: Implement GET /api/whatsapp/pairing-code-status
+  Step 6: Implement GET /api/whatsapp/connection-status
+  Step 7: Implement POST /api/whatsapp/disconnect
+  Step 8: Implement POST /api/whatsapp/reconnect
+  TEST: Use Postman/curl to request pairing code, verify code appears,
+        enter code in real WhatsApp, verify status changes to 'accepted'
+
+PHASE 2 — Frontend Components (Checkpoint after completion)
+  Step 1: Create StepIndicator.tsx component
+  Step 2: Create PairingCodeDisplay.tsx component (with countdown timer)
+  Step 3: Create PhoneInputField.tsx with country picker modal
+  Step 4: Create ConnectionStatusCard.tsx
+  Step 5: Create useWhatsAppConnection.ts hook
+  TEST: Render each component in isolation, verify styling in light + dark mode
+
+PHASE 3 — Connection Flow Screen (Checkpoint after completion)
+  Step 1: Create app/connect-whatsapp.tsx with step state management
+  Step 2: Build Step 1 UI (phone number entry)
+  Step 3: Build Step 2 UI (pairing code display + polling)
+  Step 4: Build Step 3 UI (success state)
+  Step 5: Wire up useWhatsAppConnection hook throughout
+  Step 6: Add step transition animations (reanimated)
+  TEST: Full end-to-end: enter phone, get code, enter in WhatsApp, see success
+
+PHASE 4 — Integration with Existing Screens (Checkpoint after completion)
+  Step 1: Add "WHATSAPP CONNECTION" section to app/(tabs)/settings.tsx
+  Step 2: Add disconnected banner to app/(tabs)/index.tsx Dashboard
+  Step 3: Verify haptics on all interactions
+  Step 4: Verify all loading/error/empty states work
+  Step 5: Test dark mode on all new components and screens
+  Step 6: Test graceful degradation when backend returns 404
+  TEST: Full walkthrough in both light and dark mode,
+        verify settings section and dashboard banner behave correctly
+
+═══════════════════════════════════════════════════════════════════
+SECTION 10: UI/UX RULES FOR THIS FEATURE
+═══════════════════════════════════════════════════════════════════
+
+- The 8-character pairing code must be the visual focal point of Step 2 —
+  large, bold, clearly readable, impossible to miss
+- The countdown timer must always be visible when the code is active
+- Instructions must be simple numbered steps — no paragraphs
+- Never expose the raw phone number in any UI — always show masked version
+  after Step 1 is submitted
+- The "I'll do this later" option must always be accessible on Step 2
+  (users should never feel trapped)
+- If the user navigates away from Step 2 and comes back (app backgrounded),
+  check connection-status on screen focus — if already connected, jump to Step 3
+- Polling MUST stop when: screen is unmounted, step changes to 3, code expires
+  Use useFocusEffect from expo-router to start/stop polling based on screen focus
+- All error messages must be human-readable, not technical:
+  - "Could not reach WhatsApp. Please check your internet connection."
+  - "This phone number doesn't appear to be registered on WhatsApp."
+  - "Too many attempts. Please wait 10 minutes and try again."
+  - "The code has expired. Please request a new one."
+
+Start with Phase 1. Present your implementation plan and wait for confirmation before writing any code.
