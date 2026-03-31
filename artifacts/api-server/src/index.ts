@@ -3,6 +3,7 @@ import app from "./app.js";
 import { logger } from "./lib/logger.js";
 import { initWsServer } from "./services/websocket/wsServer.js";
 import { initializeFromDB } from "./services/tracker/trackingEngine.js";
+import { autoReconnectAllSessions } from "./lib/whatsappSessionManager.js";
 
 const rawPort = process.env["PORT"];
 
@@ -27,6 +28,10 @@ httpServer.listen(port, () => {
 
   initializeFromDB().catch((err) => {
     logger.error({ err }, "Failed to initialize tracking jobs from DB");
+  });
+
+  autoReconnectAllSessions().catch((err) => {
+    logger.error({ err }, "Failed to auto-reconnect WhatsApp sessions");
   });
 });
 

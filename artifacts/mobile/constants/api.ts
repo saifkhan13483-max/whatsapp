@@ -65,4 +65,15 @@ export const API = {
     DISCONNECT: "/whatsapp/disconnect",
     RECONNECT: "/whatsapp/reconnect",
   },
+  TRACKER: {
+    SESSION_START: "/tracker/session/start",
+    SESSION_STATUS: "/tracker/session/status",
+    SESSION_PAIRING_CODE: "/tracker/session/pairing-code",
+    SESSION_VERIFY: "/tracker/session/verify",
+    TRACK: "/tracker/track",
+    UNTRACK: (jobId: number) => `/tracker/untrack/${jobId}`,
+    JOBS: "/tracker/jobs",
+    ACTIVITY: (phone: string) => `/tracker/activity/${phone}`,
+    STATS: (phone: string) => `/tracker/stats/${phone}`,
+  },
 } as const;

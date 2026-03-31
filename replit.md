@@ -159,6 +159,27 @@ Express 5 REST API running on port 8080.
 - GET /api/geofence/zones
 - POST /api/geofence/zones
 
+**WhatsApp / Baileys (Pairing Code Flow):**
+- POST /api/whatsapp/request-pairing-code — generate pairing code (E.164 phone, libphonenumber validated)
+- GET /api/whatsapp/connection-status — current connection state + masked phone + lastError
+- GET /api/whatsapp/pairing-code-status — polling endpoint (waiting/accepted/expired/error)
+- POST /api/whatsapp/disconnect
+- POST /api/whatsapp/reconnect
+
+**Tracker (Puppeteer-based):**
+- POST /api/tracker/session/start — launch Chromium, restore or initiate QR session
+- GET /api/tracker/session/status
+- DELETE /api/tracker/session
+- POST /api/tracker/session/pairing-code — Baileys pairing code unified under tracker namespace
+- GET /api/tracker/session/verify — polling endpoint for pairing acceptance
+- POST /api/tracker/session/verify — full connection status check
+- POST /api/tracker/track — start tracking a phone number
+- DELETE /api/tracker/untrack/:jobId
+- GET /api/tracker/jobs — list jobs with live worker status
+- GET /api/tracker/activity/:phoneNumber — raw logs (last 7d, paginated)
+- GET /api/tracker/stats/:phoneNumber — aggregate: sessions, durations, daily breakdown
+- GET /api/tracker/ws/info
+
 ### Auth Implementation
 - JWT tokens in httpOnly cookies
 - bcryptjs for password hashing
@@ -185,6 +206,11 @@ Tables created via `drizzle-kit push` (run from `lib/db`):
 - dnd_rules
 - keyword_alerts
 - geofence_zones
+- whatsapp_sessions — stores Baileys connection state per user (creds + keys encrypted in DB); columns: id, userId, phoneNumber, status, lastSeen, lastError, reconnectAttempts, createdAt, updatedAt
+- whatsapp_auth_keys — individual auth key entries for Baileys (key type + id + JSON value); FK to whatsapp_sessions
+- tracker_sessions — stores Puppeteer/Baileys tracker connections per user; columns: id, userId, phone, sessionData, status, connectionType, lastError, reconnectAttempts, createdAt, updatedAt
+- tracker_jobs — active tracking jobs (phone, status, nextPollAt, jobId)
+- tracker_logs — per-job online/offline event log
 
 ## Metro Bundler Configuration
 

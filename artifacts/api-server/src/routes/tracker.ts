@@ -18,6 +18,12 @@ import {
   getWorkerStatus,
 } from "../services/tracker/trackingEngine.js";
 import { getConnectedCount } from "../services/websocket/wsServer.js";
+import {
+  requestPairingCode,
+  getPairingCodeStatus,
+  getConnectionStatus,
+} from "../lib/whatsappSessionManager.js";
+import { parsePhoneNumber, isValidPhoneNumber } from "libphonenumber-js";
 
 const router = Router();
 
@@ -39,6 +45,73 @@ router.delete("/session", async (req, res) => {
   const userId = (req as any).userId as number;
   await disconnectSession(userId);
   res.json({ success: true, message: "Session disconnected" });
+});
+
+router.post("/session/pairing-code", async (req, res) => {
+  const userId = (req as any).userId as number;
+  const { phoneNumber } = req.body as { phoneNumber?: string };
+
+  if (!phoneNumber || typeof phoneNumber !== "string") {
+    res.status(400).json({ error: "phoneNumber is required." });
+    return;
+  }
+
+  const trimmed = phoneNumber.trim();
+
+  let e164: string;
+  try {
+    if (!isValidPhoneNumber(trimmed)) {
+      res.status(400).json({
+        error:
+          "Invalid phone number. Please enter a valid number with country code (e.g. +923001234567).",
+      });
+      return;
+    }
+    const parsed = parsePhoneNumber(trimmed);
+    e164 = parsed.format("E.164");
+  } catch {
+    res.status(400).json({
+      error:
+        "Could not parse phone number. Make sure to include the country code (e.g. +923001234567).",
+    });
+    return;
+  }
+
+  try {
+    const result = await requestPairingCode(userId, e164);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    const status = err?.statusCode ?? 500;
+    res.status(status).json({ error: err?.message ?? "Failed to generate pairing code." });
+  }
+});
+
+router.get("/session/verify", async (req, res) => {
+  const userId = (req as any).userId as number;
+  try {
+    const status = await getPairingCodeStatus(userId);
+    res.json({ success: true, ...status });
+  } catch {
+    res.json({ success: false, accepted: false, status: "error" });
+  }
+});
+
+router.post("/session/verify", async (req, res) => {
+  const userId = (req as any).userId as number;
+  try {
+    const status = await getConnectionStatus(userId);
+    const linked = status.status === "connected";
+    res.json({
+      success: true,
+      linked,
+      status: status.status,
+      phoneNumber: status.phoneNumber,
+      connectedAt: status.connectedAt,
+      lastError: status.lastError,
+    });
+  } catch {
+    res.json({ success: false, linked: false, status: "error" });
+  }
 });
 
 router.post("/track", async (req, res) => {

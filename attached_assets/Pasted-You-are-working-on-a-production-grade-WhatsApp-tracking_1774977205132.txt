@@ -1,0 +1,149 @@
+You are working on a production-grade WhatsApp tracking system built as a pnpm monorepo with:
+
+* Express 5 backend (Node.js 24, TypeScript, ESM)
+* Puppeteer-based WhatsApp Web automation
+* Baileys (7.0.0-rc.9) for pairing-code login
+* PostgreSQL (Drizzle ORM)
+* Expo React Native mobile app
+* WebSocket real-time updates
+* In-memory tracking workers (AbortController-based)
+
+Your task is to FIX and STABILIZE the WhatsApp account linking system so it behaves reliably like a polished SaaS product.
+
+========================
+🎯 GOALS
+========
+
+1. Fix pairing code login issues:
+
+   * Ensure correct phone number formatting (E.164, e.g. +923XXXXXXXXX)
+   * Guarantee pairing code generation always succeeds
+   * Handle expired/invalid codes gracefully
+   * Add retry mechanism with exponential backoff
+
+2. Unify WhatsApp connection flows:
+
+   * Support BOTH:
+     a) QR login (Puppeteer)
+     b) Pairing code login (Baileys)
+   * Store connection method in DB (tracker_sessions.connectionType)
+   * Allow switching between methods
+
+3. Session reliability:
+
+   * Persist Baileys auth state in PostgreSQL (NOT memory only)
+   * Auto-reconnect on server restart
+   * Detect and recover from:
+
+     * disconnected
+     * conflict
+     * timeout
+     * logged out
+
+4. Backend improvements (Express):
+
+   * Add new endpoints:
+
+     POST /api/tracker/session/pairing-code
+     → input: phoneNumber
+     → output: pairingCode + expiresAt
+
+     POST /api/tracker/session/verify
+     → confirm successful linking
+
+   * Normalize phone numbers before processing
+
+   * Add structured error responses
+
+5. Fix Puppeteer session issues:
+
+   * Improve QR extraction (use proper QR data instead of canvas screenshot)
+   * Add DOM stability checks before reading "online" status
+   * Handle WhatsApp UI changes safely
+
+6. Add connection state machine:
+   States:
+   idle → loading → qr_ready → pairing_code → connected → error
+
+   Store in tracker_sessions.status
+
+7. Mobile app fixes (Expo):
+
+   * Update useWhatsAppConnection hook:
+
+     * handle pairingCode state
+     * show countdown timer (expiry)
+     * auto-refresh code if expired
+   * Improve UX:
+
+     * loading spinner while generating code
+     * clear error messages:
+
+       * "Invalid number"
+       * "Code expired"
+       * "Connection failed"
+
+8. WebSocket improvements:
+
+   * Emit events:
+
+     * session_connected
+     * session_disconnected
+     * pairing_code_generated
+
+9. Anti-ban & stability:
+
+   * Add rate limiting per user
+   * Limit:
+
+     * max tracked numbers per session
+     * max polling frequency
+   * Randomize Puppeteer behavior more realistically
+
+10. Observability:
+
+* Add Pino logs for:
+
+  * pairing attempts
+  * session failures
+  * reconnect attempts
+* Include userId + sessionId context
+
+========================
+🧱 DATABASE CHANGES
+===================
+
+Update tracker_sessions table:
+
+* connectionType: "qr" | "pairing_code"
+* pairingCode: string (nullable)
+* pairingExpiresAt: timestamp
+* lastError: text
+* reconnectAttempts: number
+
+========================
+⚙️ IMPLEMENTATION RULES
+=======================
+
+* Use clean modular architecture
+* Follow existing monorepo structure
+* Keep TypeScript strict
+* Reuse Drizzle + Zod schemas
+* Do NOT break existing tracking engine
+* All new APIs must be documented in OpenAPI (lib/api-spec)
+* Regenerate React Query hooks via Orval
+
+========================
+🎯 END RESULT
+=============
+
+* User enters phone number → instantly gets pairing code
+* Code works reliably in WhatsApp “Link device”
+* Session connects and persists
+* Auto-reconnect works after restart
+* No random failures or stuck states
+* UX feels smooth like a real SaaS product
+
+IMPORTANT:
+Do NOT use unofficial hacks beyond Puppeteer and Baileys.
+Focus on stability, error handling, and production readiness.

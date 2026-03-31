@@ -10,27 +10,42 @@ export interface PresenceResult {
 
 const WA_SEND_URL = "https://web.whatsapp.com/send";
 
-function jitterMs(baseMs: number, jitterPct = 0.4): number {
+export function jitterMs(baseMs: number, jitterPct = 0.4): number {
   const delta = baseMs * jitterPct;
   return baseMs + Math.round((Math.random() * 2 - 1) * delta);
 }
 
 async function dismissDialogs(page: Page): Promise<void> {
   try {
-    const buttons = await page.$$("button");
+    const buttons = await page.$$("button, [role='button']");
     for (const btn of buttons) {
-      const text = await btn.evaluate((el) => el.textContent?.toLowerCase() ?? "");
+      const text = await btn
+        .evaluate((el) => el.textContent?.toLowerCase() ?? "")
+        .catch(() => "");
       if (
         text.includes("continue") ||
         text.includes("ok") ||
-        text.includes("open")
+        text.includes("open") ||
+        text.includes("use here") ||
+        text.includes("keep using")
       ) {
-        await btn.click();
-        await new Promise((r) => setTimeout(r, 500));
+        await btn.click().catch(() => {});
+        await new Promise((r) => setTimeout(r, jitterMs(600)));
         break;
       }
     }
   } catch {}
+}
+
+async function isDomStable(page: Page): Promise<boolean> {
+  try {
+    const headerExists = await page
+      .evaluate(() => !!document.querySelector("header"))
+      .catch(() => false);
+    return headerExists;
+  } catch {
+    return false;
+  }
 }
 
 async function readStatusFromDOM(page: Page): Promise<PresenceResult> {
@@ -39,26 +54,49 @@ async function readStatusFromDOM(page: Page): Promise<PresenceResult> {
       const header = document.querySelector("header");
       if (!header) return { status: "unknown", text: null };
 
-      const allSpans = Array.from(header.querySelectorAll("span"));
-      for (const span of allSpans) {
-        const raw = (span.textContent ?? "").trim().toLowerCase();
+      const normalize = (s: string) => s.trim().toLowerCase();
+
+      const allSpans = Array.from(header.querySelectorAll("span, div"));
+      for (const el of allSpans) {
+        const raw = normalize(el.textContent ?? "");
+        if (!raw || raw.length > 80) continue;
+
         if (raw === "online") {
           return { status: "online", text: "online" };
         }
-        if (raw.startsWith("last seen")) {
-          return { status: "last_seen", text: span.textContent?.trim() ?? raw };
+        if (
+          raw.startsWith("last seen") ||
+          raw.startsWith("last seen today") ||
+          raw.startsWith("last seen yesterday")
+        ) {
+          return {
+            status: "last_seen",
+            text: (el.textContent ?? "").trim(),
+          };
         }
       }
 
-      const subtitles = header.querySelectorAll(
-        "span._3W2ap, span[class*='subtitle'], div[class*='info'] span"
-      );
-      for (const el of subtitles) {
-        const raw = (el.textContent ?? "").trim().toLowerCase();
-        if (raw === "online") return { status: "online", text: "online" };
-        if (raw.startsWith("last seen")) {
-          return { status: "last_seen", text: el.textContent?.trim() ?? raw };
-        }
+      const specificSelectors = [
+        "span._3W2ap",
+        "span[class*='subtitle']",
+        "div[class*='info'] span",
+        "span[class*='y44bm']",
+        "span[class*='presence']",
+        "[data-testid='conversation-info-header-chat-title'] + span",
+      ];
+      for (const sel of specificSelectors) {
+        try {
+          const els = header.querySelectorAll(sel);
+          for (const el of els) {
+            const raw = normalize(el.textContent ?? "");
+            if (raw === "online") return { status: "online", text: "online" };
+            if (raw.startsWith("last seen"))
+              return {
+                status: "last_seen",
+                text: (el.textContent ?? "").trim(),
+              };
+          }
+        } catch {}
       }
 
       return { status: "offline", text: null };
@@ -69,8 +107,25 @@ async function readStatusFromDOM(page: Page): Promise<PresenceResult> {
   }
 }
 
+async function doubleCheckStatus(page: Page): Promise<PresenceResult> {
+  const first = await readStatusFromDOM(page);
+  if (first.status === "unknown") return first;
+
+  await new Promise((r) => setTimeout(r, jitterMs(400, 0.3)));
+  const second = await readStatusFromDOM(page);
+
+  if (first.status === second.status) return second;
+
+  await new Promise((r) => setTimeout(r, jitterMs(600, 0.3)));
+  const third = await readStatusFromDOM(page);
+
+  return second.status === third.status ? third : first;
+}
+
 export async function readStatusFromDOMRecheck(page: Page): Promise<PresenceResult> {
-  return readStatusFromDOM(page);
+  const stable = await isDomStable(page);
+  if (!stable) return { status: "unknown", text: null };
+  return doubleCheckStatus(page);
 }
 
 export async function openChatAndDetect(
@@ -91,15 +146,18 @@ export async function openChatAndDetect(
       await new Promise((r) => setTimeout(r, jitterMs(3000)));
       await dismissDialogs(page);
       await page.waitForSelector("header", { timeout: 15_000 });
+      await new Promise((r) => setTimeout(r, jitterMs(1000)));
+      await dismissDialogs(page);
     } catch (err) {
       logger.warn({ err, phoneNumber }, "Failed to navigate to chat");
       return { status: "unknown", text: null };
     }
   } else {
     await new Promise((r) => setTimeout(r, jitterMs(1500)));
+    await dismissDialogs(page);
   }
 
-  return readStatusFromDOM(page);
+  return doubleCheckStatus(page);
 }
 
 export async function pollStatus(
@@ -123,7 +181,7 @@ export async function pollStatus(
     try {
       const result = first
         ? await openChatAndDetect(page, phoneNumber)
-        : await readStatusFromDOM(page);
+        : await readStatusFromDOMRecheck(page);
 
       await onResult(result);
     } catch (err) {
@@ -131,5 +189,3 @@ export async function pollStatus(
     }
   }
 }
-
-export { jitterMs };

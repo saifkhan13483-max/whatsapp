@@ -1,68 +1,39 @@
 import makeWASocket, {
-  useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   type WASocket,
-  type AuthenticationState,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import { db } from "@workspace/db";
 import { whatsappSessionsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger.js";
-import crypto from "crypto";
-import fs from "fs";
-import path from "path";
-import os from "os";
+import { useDbAuthState } from "./dbAuthState.js";
+import { broadcast } from "../services/websocket/wsServer.js";
 
-const APP_SECRET = process.env["JWT_SECRET"] ?? "default-secret-change-me";
-
-function encrypt(text: string): string {
-  const key = crypto.scryptSync(APP_SECRET, "salt", 32);
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-  const encrypted = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
-  return iv.toString("hex") + ":" + encrypted.toString("hex");
-}
-
-function decrypt(text: string): string {
-  try {
-    const [ivHex, encHex] = text.split(":");
-    const key = crypto.scryptSync(APP_SECRET, "salt", 32);
-    const iv = Buffer.from(ivHex, "hex");
-    const enc = Buffer.from(encHex, "hex");
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-    return Buffer.concat([decipher.update(enc), decipher.final()]).toString("utf8");
-  } catch {
-    return text;
-  }
-}
-
-function maskPhone(phone: string): string {
-  const digits = phone.replace(/\D/g, "");
-  if (digits.length < 7) return phone;
-  const last4 = digits.slice(-4);
-  const prefix = phone.slice(0, phone.indexOf(digits.slice(-7, -4)));
-  return phone.replace(digits.slice(-7, -4), "***").replace(digits.slice(-4), last4);
-}
-
-export type ConnectionStatus = "not_connected" | "pending_pairing" | "connected" | "disconnected";
+export type ConnectionStatus =
+  | "not_connected"
+  | "pending_pairing"
+  | "connected"
+  | "disconnected"
+  | "reconnecting"
+  | "error";
 
 interface SocketEntry {
   socket: WASocket;
   pairingCode?: string;
   pairingCodeExpiresAt?: Date;
   connectionAccepted: boolean;
-  sessionDir: string;
 }
 
 const activeSockets = new Map<number, SocketEntry>();
-const rateLimitMap = new Map<number, { count: number; windowStart: number }>();
 
+const rateLimitMap = new Map<number, { count: number; windowStart: number }>();
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const PAIRING_CODE_TTL_MS = 5 * 60 * 1000;
 const PAIRING_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RECONNECT_ATTEMPTS = 5;
 
 function checkRateLimit(userId: number): boolean {
   const now = Date.now();
@@ -76,23 +47,10 @@ function checkRateLimit(userId: number): boolean {
   return true;
 }
 
-function getSessionDir(userId: number): string {
-  const dir = path.join(os.tmpdir(), `wa_session_${userId}`);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-async function destroySocket(userId: number) {
-  const entry = activeSockets.get(userId);
-  if (entry) {
-    try {
-      entry.socket.end(undefined);
-    } catch {}
-    activeSockets.delete(userId);
-    try {
-      fs.rmSync(entry.sessionDir, { recursive: true, force: true });
-    } catch {}
-  }
+function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length <= 6) return phone;
+  return digits.slice(0, digits.length - 7) + "***" + digits.slice(-4);
 }
 
 function makeApiError(message: string, statusCode: number): Error {
@@ -101,62 +59,145 @@ function makeApiError(message: string, statusCode: number): Error {
   return err;
 }
 
+async function destroySocket(userId: number): Promise<void> {
+  const entry = activeSockets.get(userId);
+  if (entry) {
+    try { entry.socket.end(undefined); } catch {}
+    activeSockets.delete(userId);
+  }
+}
+
+async function persistError(userId: number, errorMsg: string): Promise<void> {
+  try {
+    await db
+      .update(whatsappSessionsTable)
+      .set({ lastError: errorMsg, updatedAt: new Date() })
+      .where(eq(whatsappSessionsTable.userId, userId));
+  } catch {}
+}
+
+async function upsertSession(
+  userId: number,
+  fields: Partial<typeof whatsappSessionsTable.$inferInsert>
+): Promise<void> {
+  const existing = await db
+    .select({ id: whatsappSessionsTable.id })
+    .from(whatsappSessionsTable)
+    .where(eq(whatsappSessionsTable.userId, userId))
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(whatsappSessionsTable)
+      .set({ ...fields, updatedAt: new Date() })
+      .where(eq(whatsappSessionsTable.userId, userId));
+  } else {
+    await db.insert(whatsappSessionsTable).values({
+      userId,
+      ...fields,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as typeof whatsappSessionsTable.$inferInsert);
+  }
+}
+
+function scheduleReconnect(userId: number, delayMs: number): void {
+  setTimeout(async () => {
+    const rows = await db
+      .select()
+      .from(whatsappSessionsTable)
+      .where(eq(whatsappSessionsTable.userId, userId))
+      .limit(1);
+
+    if (!rows.length || !rows[0].sessionData) {
+      logger.warn({ userId }, "No session data — skipping reconnect");
+      return;
+    }
+
+    const attempts = rows[0].reconnectAttempts ?? 0;
+    if (attempts >= MAX_RECONNECT_ATTEMPTS) {
+      logger.warn({ userId, attempts }, "Max reconnect attempts reached");
+      await upsertSession(userId, {
+        status: "error",
+        lastError: "Max reconnect attempts reached. Please re-link your WhatsApp.",
+      });
+      broadcast(userId, {
+        type: "session_disconnected",
+        userId,
+        reason: "max_retries",
+        timestamp: new Date().toISOString(),
+      });
+      return;
+    }
+
+    await upsertSession(userId, {
+      status: "reconnecting",
+      reconnectAttempts: attempts + 1,
+    });
+
+    logger.info({ userId, attempt: attempts + 1 }, "Auto-reconnecting WhatsApp session");
+    const result = await reconnect(userId);
+    if (result.status === "failed") {
+      const backoff = Math.min(30_000, delayMs * 2);
+      scheduleReconnect(userId, backoff);
+    }
+  }, delayMs);
+}
+
 export async function requestPairingCode(
   userId: number,
   phoneNumber: string
 ): Promise<{ pairingCode: string; expiresAt: string }> {
   if (!checkRateLimit(userId)) {
-    throw makeApiError("Too many attempts. Please wait 10 minutes and try again.", 429);
+    throw makeApiError(
+      "Too many attempts. Please wait 10 minutes and try again.",
+      429
+    );
   }
 
-  const existingSession = await db
+  const existing = await db
     .select()
     .from(whatsappSessionsTable)
     .where(eq(whatsappSessionsTable.userId, userId))
     .limit(1);
 
-  if (existingSession.length > 0 && existingSession[0].status === "connected") {
+  if (existing.length > 0 && existing[0].status === "connected") {
     throw makeApiError("WhatsApp is already linked for this account.", 409);
   }
 
-  // Baileys requires pure digits only — strip country code + sign
   const cleanPhone = phoneNumber.replace(/\D/g, "");
   if (!cleanPhone || cleanPhone.length < 7) {
-    throw makeApiError("Invalid phone number. Please include your country code.", 400);
+    throw makeApiError(
+      "Invalid phone number. Please include your country code (e.g. +923001234567).",
+      400
+    );
   }
 
-  // Destroy any existing in-memory socket
   await destroySocket(userId);
 
-  if (existingSession.length > 0) {
-    await db
-      .update(whatsappSessionsTable)
-      .set({ sessionData: null, status: "pending_pairing", updatedAt: new Date() })
-      .where(eq(whatsappSessionsTable.userId, userId));
-  }
+  await upsertSession(userId, {
+    status: "pending_pairing",
+    pairingCode: null,
+    pairingCodeExpiresAt: null,
+    sessionData: null,
+    lastError: null,
+    reconnectAttempts: 0,
+    phoneNumber: cleanPhone,
+    maskedPhone: maskPhone(cleanPhone),
+  });
 
-  // Always wipe the session dir — prevents stale creds.json from causing passive
-  // (reconnect) login instead of fresh pairing. Works across server restarts
-  // since activeSockets is empty but /tmp files persist.
-  const sessionDir = path.join(os.tmpdir(), `wa_session_${userId}`);
-  try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
-  fs.mkdirSync(sessionDir, { recursive: true });
-
-  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  const { state, saveCreds } = await useDbAuthState(userId);
   const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
     version,
-    auth: state as AuthenticationState,
+    auth: state,
     printQRInTerminal: false,
     logger: logger.child({ component: "baileys", userId }) as any,
-    // Use a standard browser fingerprint — custom names cause WhatsApp to reject pairing
     browser: ["Windows", "Chrome", "114.0.5735.198"],
     syncFullHistory: false,
     generateHighQualityLinkPreview: false,
-    // Prevents premature timeout before pairing code arrives
     defaultQueryTimeoutMs: undefined,
-    // Safety net: keep socket alive long enough for user to enter the code
     qrTimeout: 10 * 60 * 1000,
   });
 
@@ -165,172 +206,123 @@ export async function requestPairingCode(
     socket: sock,
     pairingCodeExpiresAt: expiresAt,
     connectionAccepted: false,
-    sessionDir,
   };
   activeSockets.set(userId, entry);
+
   sock.ev.on("creds.update", saveCreds);
 
-  function destroyEntry() {
-    try { sock.end(undefined); } catch {}
-    activeSockets.delete(userId);
-    try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
-  }
+  sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+    if (connection === "open") {
+      entry.connectionAccepted = true;
+      const now = new Date();
+      await upsertSession(userId, {
+        status: "connected",
+        connectedAt: now,
+        lastActiveAt: now,
+        lastError: null,
+        pairingCode: null,
+        pairingCodeExpiresAt: null,
+      });
+      await saveCreds();
+      broadcast(userId, {
+        type: "session_connected",
+        userId,
+        timestamp: now.toISOString(),
+      });
+      logger.info({ userId }, "WhatsApp session connected via pairing code");
+    }
 
-  // --- Phase 1: Obtain the pairing code ---
-  // We MUST call requestPairingCode() BEFORE WhatsApp sends the pair-device IQ.
-  // waitForSocketOpen() resolves after the Noise handshake completes (WS is open
-  // and the noise channel is ready). At that point, validateConnection() has
-  // started in Baileys but pair-device has not yet arrived (it takes a network
-  // round-trip). Sending link_code_companion_reg here tells WhatsApp to enter
-  // phone-number pairing mode — it never sends pair-device, so the QR ref loop
-  // never starts and can never kill the socket.
+    if (connection === "close") {
+      const boomStatus = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const loggedOut = boomStatus === DisconnectReason.loggedOut;
+      const restartRequired = boomStatus === DisconnectReason.restartRequired;
+
+      sock.ev.removeAllListeners("connection.update");
+
+      if (loggedOut) {
+        activeSockets.delete(userId);
+        await upsertSession(userId, {
+          status: "disconnected",
+          sessionData: null,
+          lastError: "Logged out from WhatsApp",
+        });
+        broadcast(userId, {
+          type: "session_disconnected",
+          userId,
+          reason: "logged_out",
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      if (restartRequired && entry.connectionAccepted) {
+        activeSockets.delete(userId);
+        scheduleReconnect(userId, 1000);
+        return;
+      }
+
+      if (!entry.connectionAccepted) {
+        activeSockets.delete(userId);
+        await persistError(
+          userId,
+          "Connection closed before pairing completed. Check the code and try again."
+        );
+        broadcast(userId, {
+          type: "session_disconnected",
+          userId,
+          reason: "pairing_failed",
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+  });
+
   let code: string;
   try {
     const codeRace = (async () => {
       await sock.waitForSocketOpen();
-      return await sock.requestPairingCode(cleanPhone);
+      return sock.requestPairingCode(cleanPhone);
     })();
 
     const timeoutRace = new Promise<never>((_, rej) =>
       setTimeout(
-        () => rej(makeApiError(
-          "Could not reach WhatsApp. Please check your internet connection and try again.",
-          408
-        )),
+        () =>
+          rej(
+            makeApiError(
+              "Could not reach WhatsApp servers. Check your internet connection and try again.",
+              408
+            )
+          ),
         PAIRING_REQUEST_TIMEOUT_MS
       )
     );
 
     code = await Promise.race([codeRace, timeoutRace]);
   } catch (err: any) {
-    destroyEntry();
-    const msg: string = err?.message ?? "";
-    const lowerMsg = msg.toLowerCase();
-    const boomStatus = (err as Boom)?.output?.statusCode;
-    const httpStatus: number = (err as any).statusCode ?? (
-      (lowerMsg.includes("not registered") || lowerMsg.includes("invalid phone")) ? 400 :
-      boomStatus === 428 || lowerMsg.includes("428") ? 428 :
-      boomStatus === 401 || lowerMsg.includes("401") ? 401 :
-      typeof (err as any).statusCode === "number" ? (err as any).statusCode :
-      500
-    );
-    throw makeApiError(
-      (err as any).statusCode ? msg :
-      (httpStatus === 400 ? "This phone number doesn't appear to be registered on WhatsApp." :
-       httpStatus === 408 ? "Could not reach WhatsApp. Please check your internet connection and try again." :
-       httpStatus === 428 ? "Connection was not ready. Please wait a moment and try again." :
-       httpStatus === 401 ? "WhatsApp rejected the connection. Please try again." :
-       "Could not connect to WhatsApp. Please try again."),
-      httpStatus
-    );
-  }
-
-  if (!code) {
-    destroyEntry();
-    throw makeApiError("WhatsApp returned an empty code. Please try again.", 502);
+    await destroySocket(userId);
+    await persistError(userId, err?.message ?? "Pairing code request failed");
+    throw err;
   }
 
   entry.pairingCode = code;
-  entry.pairingCodeExpiresAt = expiresAt;
 
-  const masked = maskPhone(phoneNumber);
-  try {
-    await db
-      .insert(whatsappSessionsTable)
-      .values({
-        userId,
-        phoneNumber: encrypt(phoneNumber),
-        maskedPhone: masked,
-        status: "pending_pairing",
-        pairingCode: code,
-        pairingCodeExpiresAt: expiresAt,
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: whatsappSessionsTable.userId,
-        set: {
-          phoneNumber: encrypt(phoneNumber),
-          maskedPhone: masked,
-          status: "pending_pairing",
-          pairingCode: code,
-          pairingCodeExpiresAt: expiresAt,
-          sessionData: null,
-          updatedAt: new Date(),
-        },
-      });
-  } catch (dbErr) {
-    logger.error({ dbErr }, "Failed to save pairing code to DB");
-  }
-
-  // --- Phase 2: Background listener — wait for pairing completion ---
-  // Keep the socket alive in activeSockets. When the user enters the code,
-  // WhatsApp sends pair-success, Baileys emits isNewLogin then closes the
-  // connection. We persist the connected state to the DB here.
-  sock.ev.on("connection.update", async (update) => {
-    const { connection, lastDisconnect, isNewLogin } = update;
-
-    if (isNewLogin) {
-      // pair-success received — mark accepted immediately (sync, before any await)
-      entry.connectionAccepted = true;
-      logger.info({ userId }, "WhatsApp pairing accepted (isNewLogin)");
-      try {
-        // Give saveCreds a tick to flush creds.json
-        await new Promise((r) => setTimeout(r, 200));
-        const credsData = fs.readFileSync(path.join(sessionDir, "creds.json"), "utf8");
-        await db
-          .update(whatsappSessionsTable)
-          .set({
-            status: "connected",
-            connectedAt: new Date(),
-            lastActiveAt: new Date(),
-            sessionData: encrypt(credsData),
-            updatedAt: new Date(),
-          })
-          .where(eq(whatsappSessionsTable.userId, userId));
-        logger.info({ userId }, "WhatsApp session saved as connected");
-      } catch (e) {
-        logger.error({ e }, "Failed to save WhatsApp session after pairing");
-      }
-    }
-
-    if (connection === "open") {
-      // Socket reconnected after pair-success restart
-      entry.connectionAccepted = true;
-      if (!entry.connectionAccepted) {
-        try {
-          const credsData = JSON.stringify(state.creds);
-          await db
-            .update(whatsappSessionsTable)
-            .set({
-              status: "connected",
-              connectedAt: new Date(),
-              lastActiveAt: new Date(),
-              sessionData: encrypt(credsData),
-              updatedAt: new Date(),
-            })
-            .where(eq(whatsappSessionsTable.userId, userId));
-        } catch (e) {
-          logger.error({ e }, "Failed to save WhatsApp session after reconnect");
-        }
-      }
-    }
-
-    if (connection === "close") {
-      const boomStatus = (lastDisconnect?.error as Boom)?.output?.statusCode;
-      const loggedOut = boomStatus === DisconnectReason.loggedOut;
-      sock.ev.removeAllListeners("connection.update");
-      if (loggedOut || !entry.connectionAccepted) {
-        activeSockets.delete(userId);
-        try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
-        if (loggedOut) {
-          await db
-            .update(whatsappSessionsTable)
-            .set({ status: "disconnected", updatedAt: new Date() })
-            .where(eq(whatsappSessionsTable.userId, userId));
-        }
-      }
-    }
+  await upsertSession(userId, {
+    pairingCode: code,
+    pairingCodeExpiresAt: expiresAt,
   });
+
+  broadcast(userId, {
+    type: "pairing_code_generated",
+    userId,
+    pairingCode: code,
+    expiresAt: expiresAt.toISOString(),
+    timestamp: new Date().toISOString(),
+  });
+
+  logger.info(
+    { userId, maskedPhone: maskPhone(cleanPhone) },
+    "Pairing code generated successfully"
+  );
 
   return { pairingCode: code, expiresAt: expiresAt.toISOString() };
 }
@@ -341,35 +333,31 @@ export async function getConnectionStatus(userId: number): Promise<{
   connectedAt?: string;
   pairingCode?: string;
   pairingCodeExpiresAt?: string;
+  lastError?: string;
+  reconnectAttempts?: number;
 }> {
   const rows = await db
     .select()
     .from(whatsappSessionsTable)
     .where(eq(whatsappSessionsTable.userId, userId))
     .limit(1);
-  if (rows.length === 0) return { status: "not_connected" };
+
+  if (!rows.length) return { status: "not_connected" };
 
   const row = rows[0];
   const entry = activeSockets.get(userId);
 
-  if (
+  const isPairingExpired =
     row.status === "pending_pairing" &&
-    row.pairingCodeExpiresAt &&
-    new Date() > row.pairingCodeExpiresAt
-  ) {
-    return {
-      status: "pending_pairing",
-      pairingCode: row.pairingCode ?? undefined,
-      pairingCodeExpiresAt: row.pairingCodeExpiresAt?.toISOString(),
-    };
-  }
+    row.pairingCodeExpiresAt != null &&
+    new Date() > row.pairingCodeExpiresAt;
 
   return {
     status: (row.status as ConnectionStatus) ?? "not_connected",
     phoneNumber: row.maskedPhone ?? undefined,
     connectedAt: row.connectedAt?.toISOString(),
     pairingCode:
-      row.status === "pending_pairing"
+      row.status === "pending_pairing" && !isPairingExpired
         ? (entry?.pairingCode ?? row.pairingCode ?? undefined)
         : undefined,
     pairingCodeExpiresAt:
@@ -377,12 +365,16 @@ export async function getConnectionStatus(userId: number): Promise<{
         ? (entry?.pairingCodeExpiresAt?.toISOString() ??
           row.pairingCodeExpiresAt?.toISOString())
         : undefined,
+    lastError: row.lastError ?? undefined,
+    reconnectAttempts: row.reconnectAttempts ?? 0,
   };
 }
 
 export async function getPairingCodeStatus(userId: number): Promise<{
   accepted: boolean;
   status: "waiting" | "accepted" | "expired" | "error";
+  pairingCode?: string;
+  expiresAt?: string;
 }> {
   const entry = activeSockets.get(userId);
   const rows = await db
@@ -391,26 +383,48 @@ export async function getPairingCodeStatus(userId: number): Promise<{
     .where(eq(whatsappSessionsTable.userId, userId))
     .limit(1);
 
-  if (rows.length === 0) return { accepted: false, status: "waiting" };
+  if (!rows.length) return { accepted: false, status: "waiting" };
 
   const row = rows[0];
 
-  if (row.status === "connected") return { accepted: true, status: "accepted" };
-  if (entry?.connectionAccepted) return { accepted: true, status: "accepted" };
+  if (row.status === "connected" || entry?.connectionAccepted) {
+    return { accepted: true, status: "accepted" };
+  }
 
-  if (row.pairingCodeExpiresAt && new Date() > row.pairingCodeExpiresAt) {
+  if (row.status === "error") {
+    return { accepted: false, status: "error" };
+  }
+
+  if (row.pairingCodeExpiresAt != null && new Date() > row.pairingCodeExpiresAt) {
     return { accepted: false, status: "expired" };
   }
 
-  return { accepted: false, status: "waiting" };
+  return {
+    accepted: false,
+    status: "waiting",
+    pairingCode: entry?.pairingCode ?? row.pairingCode ?? undefined,
+    expiresAt:
+      entry?.pairingCodeExpiresAt?.toISOString() ??
+      row.pairingCodeExpiresAt?.toISOString(),
+  };
 }
 
 export async function disconnect(userId: number): Promise<void> {
   await destroySocket(userId);
-  await db
-    .update(whatsappSessionsTable)
-    .set({ status: "disconnected", pairingCode: null, sessionData: null, updatedAt: new Date() })
-    .where(eq(whatsappSessionsTable.userId, userId));
+  await upsertSession(userId, {
+    status: "disconnected",
+    pairingCode: null,
+    sessionData: null,
+    lastError: null,
+    reconnectAttempts: 0,
+  });
+  broadcast(userId, {
+    type: "session_disconnected",
+    userId,
+    reason: "user_disconnected",
+    timestamp: new Date().toISOString(),
+  });
+  logger.info({ userId }, "WhatsApp session disconnected by user");
 }
 
 export async function reconnect(
@@ -421,60 +435,109 @@ export async function reconnect(
     .from(whatsappSessionsTable)
     .where(eq(whatsappSessionsTable.userId, userId))
     .limit(1);
-  if (rows.length === 0 || !rows[0].sessionData) return { status: "failed" };
 
-  const row = rows[0];
-  const sessionDir = getSessionDir(userId);
+  if (!rows.length || !rows[0].sessionData) {
+    logger.warn({ userId }, "No session data found for reconnect");
+    return { status: "failed" };
+  }
+
+  await destroySocket(userId);
 
   try {
-    const credsData = decrypt(row.sessionData!);
-    fs.writeFileSync(path.join(sessionDir, "creds.json"), credsData, "utf8");
-
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+    const { state, saveCreds } = await useDbAuthState(userId);
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
       version,
-      auth: state as AuthenticationState,
+      auth: state,
       printQRInTerminal: false,
-      logger: logger.child({ component: "baileys", userId }) as any,
+      logger: logger.child({ component: "baileys-reconnect", userId }) as any,
       browser: ["Windows", "Chrome", "114.0.5735.198"],
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       defaultQueryTimeoutMs: undefined,
     });
 
-    const entry: SocketEntry = { socket: sock, connectionAccepted: false, sessionDir };
+    const entry: SocketEntry = { socket: sock, connectionAccepted: false };
     activeSockets.set(userId, entry);
 
     sock.ev.on("creds.update", saveCreds);
-    sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
-      if (connection === "open") {
-        await db
-          .update(whatsappSessionsTable)
-          .set({ status: "connected", lastActiveAt: new Date(), updatedAt: new Date() })
-          .where(eq(whatsappSessionsTable.userId, userId));
-      }
-      if (connection === "close") {
-        const loggedOut =
-          (lastDisconnect?.error as Boom)?.output?.statusCode === DisconnectReason.loggedOut;
-        if (loggedOut) {
-          await db
-            .update(whatsappSessionsTable)
-            .set({ status: "disconnected", updatedAt: new Date() })
-            .where(eq(whatsappSessionsTable.userId, userId));
-          activeSockets.delete(userId);
-        }
-      }
-    });
 
-    await db
-      .update(whatsappSessionsTable)
-      .set({ status: "connected", updatedAt: new Date() })
-      .where(eq(whatsappSessionsTable.userId, userId));
-    return { status: "connected" };
-  } catch (e) {
-    logger.error({ e }, "Failed to reconnect WhatsApp session");
+    return await new Promise<{ status: "connected" | "failed" }>((resolve) => {
+      const timeout = setTimeout(() => {
+        sock.ev.removeAllListeners("connection.update");
+        resolve({ status: "failed" });
+      }, 30_000);
+
+      sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+        if (connection === "open") {
+          clearTimeout(timeout);
+          entry.connectionAccepted = true;
+          const now = new Date();
+          await upsertSession(userId, {
+            status: "connected",
+            connectedAt: now,
+            lastActiveAt: now,
+            lastError: null,
+            reconnectAttempts: 0,
+          });
+          await saveCreds();
+          broadcast(userId, {
+            type: "session_connected",
+            userId,
+            timestamp: now.toISOString(),
+          });
+          logger.info({ userId }, "WhatsApp session reconnected successfully");
+          resolve({ status: "connected" });
+        }
+
+        if (connection === "close") {
+          clearTimeout(timeout);
+          const boomStatus = (lastDisconnect?.error as Boom)?.output?.statusCode;
+          const loggedOut = boomStatus === DisconnectReason.loggedOut;
+          sock.ev.removeAllListeners("connection.update");
+          activeSockets.delete(userId);
+
+          if (loggedOut) {
+            await upsertSession(userId, {
+              status: "disconnected",
+              sessionData: null,
+              lastError: "Logged out from WhatsApp",
+            });
+            broadcast(userId, {
+              type: "session_disconnected",
+              userId,
+              reason: "logged_out",
+              timestamp: new Date().toISOString(),
+            });
+          } else {
+            await persistError(userId, "Reconnect failed — connection closed unexpectedly");
+          }
+          resolve({ status: "failed" });
+        }
+      });
+    });
+  } catch (err: any) {
+    logger.error({ err, userId }, "Reconnect attempt threw an error");
+    await persistError(userId, err?.message ?? "Reconnect failed");
     return { status: "failed" };
+  }
+}
+
+export async function autoReconnectAllSessions(): Promise<void> {
+  const rows = await db
+    .select()
+    .from(whatsappSessionsTable)
+    .where(eq(whatsappSessionsTable.status, "connected"));
+
+  logger.info(
+    { count: rows.length },
+    "Auto-reconnecting persisted WhatsApp sessions"
+  );
+
+  for (const row of rows) {
+    if (!row.sessionData) continue;
+    const jitter = 2_000 + Math.random() * 3_000;
+    scheduleReconnect(row.userId, jitter);
   }
 }

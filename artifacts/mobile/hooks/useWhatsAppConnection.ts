@@ -1,9 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getApiUrl } from "@/lib/query-client";
 import { API } from "@/constants/api";
 
-export type ConnectionStatus = "not_connected" | "pending_pairing" | "connected" | "disconnected";
+export type ConnectionStatus =
+  | "not_connected"
+  | "pending_pairing"
+  | "connected"
+  | "disconnected"
+  | "reconnecting"
+  | "error";
+
 export type PairingStatus = "waiting" | "accepted" | "expired" | "error";
 
 export interface ConnectionStatusData {
@@ -12,11 +19,15 @@ export interface ConnectionStatusData {
   connectedAt?: string;
   pairingCode?: string;
   pairingCodeExpiresAt?: string;
+  lastError?: string;
+  reconnectAttempts?: number;
 }
 
 export interface PairingCodeStatusData {
   accepted: boolean;
   status: PairingStatus;
+  pairingCode?: string;
+  expiresAt?: string;
 }
 
 async function fetchConnectionStatus(): Promise<ConnectionStatusData> {
@@ -45,6 +56,63 @@ async function fetchPairingCodeStatus(): Promise<PairingCodeStatusData> {
   }
 }
 
+function useCodeCountdown(expiresAt: string | undefined): number {
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!expiresAt) {
+      setSecondsLeft(0);
+      return;
+    }
+
+    const expiryMs = new Date(expiresAt).getTime();
+
+    const tick = () => {
+      const remaining = Math.max(0, Math.round((expiryMs - Date.now()) / 1000));
+      setSecondsLeft(remaining);
+    };
+
+    tick();
+    intervalRef.current = setInterval(tick, 1000);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [expiresAt]);
+
+  return secondsLeft;
+}
+
+function friendlyError(msg: string | undefined, httpStatus?: number): string {
+  if (!msg) {
+    return httpStatus === 429
+      ? "Too many attempts. Please wait 10 minutes and try again."
+      : "Something went wrong. Please try again.";
+  }
+
+  const lower = msg.toLowerCase();
+  if (lower.includes("invalid phone") || lower.includes("valid number")) {
+    return "Invalid phone number. Include your country code (e.g. +923001234567).";
+  }
+  if (lower.includes("already linked")) {
+    return "This WhatsApp account is already linked.";
+  }
+  if (lower.includes("too many")) {
+    return "Too many attempts. Please wait 10 minutes.";
+  }
+  if (lower.includes("expired")) {
+    return "Code expired. Please request a new one.";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("408")) {
+    return "Could not reach WhatsApp servers. Check your internet connection.";
+  }
+  if (lower.includes("connection failed") || lower.includes("pairing failed")) {
+    return "Connection failed. Make sure the code was entered correctly and try again.";
+  }
+  return msg;
+}
+
 export function useWhatsAppConnection(isPolling = false) {
   const queryClient = useQueryClient();
   const [pollingActive, setPollingActive] = useState(isPolling);
@@ -56,7 +124,8 @@ export function useWhatsAppConnection(isPolling = false) {
   } = useQuery<ConnectionStatusData>({
     queryKey: ["whatsapp-connection-status"],
     queryFn: fetchConnectionStatus,
-    staleTime: 30_000,
+    staleTime: 10_000,
+    refetchInterval: pollingActive ? 5_000 : false,
     refetchOnWindowFocus: true,
   });
 
@@ -66,8 +135,16 @@ export function useWhatsAppConnection(isPolling = false) {
     queryKey: ["whatsapp-pairing-code-status"],
     queryFn: fetchPairingCodeStatus,
     enabled: pollingActive && connectionStatus?.status === "pending_pairing",
-    refetchInterval: pollingActive ? 3000 : false,
+    refetchInterval: pollingActive ? 3_000 : false,
   });
+
+  const codeSecondsLeft = useCodeCountdown(
+    connectionStatus?.pairingCodeExpiresAt ??
+      pairingCodeStatus?.expiresAt
+  );
+
+  const isCodeExpired =
+    connectionStatus?.status === "pending_pairing" && codeSecondsLeft === 0;
 
   const requestPairingCodeMutation = useMutation({
     mutationFn: async (phoneNumber: string) => {
@@ -79,7 +156,9 @@ export function useWhatsAppConnection(isPolling = false) {
       });
       const data = await res.json();
       if (!res.ok) {
-        const err = new Error(data.error ?? "Failed to request pairing code.") as any;
+        const err = new Error(
+          friendlyError(data.error, res.status)
+        ) as any;
         err.httpStatus = res.status;
         throw err;
       }
@@ -87,8 +166,16 @@ export function useWhatsAppConnection(isPolling = false) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-connection-status"] });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-pairing-code-status"] });
     },
   });
+
+  const refreshCode = useCallback(
+    async (phoneNumber: string) => {
+      return requestPairingCodeMutation.mutateAsync(phoneNumber);
+    },
+    [requestPairingCodeMutation]
+  );
 
   const disconnectMutation = useMutation({
     mutationFn: async () => {
@@ -101,7 +188,9 @@ export function useWhatsAppConnection(isPolling = false) {
       return data;
     },
     onSuccess: () => {
+      setPollingActive(false);
       queryClient.invalidateQueries({ queryKey: ["whatsapp-connection-status"] });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-pairing-code-status"] });
     },
   });
 
@@ -123,7 +212,14 @@ export function useWhatsAppConnection(isPolling = false) {
     isLoadingStatus,
     refetchStatus,
     pairingCodeStatus,
+    codeSecondsLeft,
+    isCodeExpired,
+    refreshCode,
     requestPairingCode: requestPairingCodeMutation.mutateAsync,
+    requestPairingCodeError:
+      requestPairingCodeMutation.error instanceof Error
+        ? requestPairingCodeMutation.error.message
+        : undefined,
     isRequestingCode: requestPairingCodeMutation.isPending,
     disconnect: disconnectMutation.mutateAsync,
     isDisconnecting: disconnectMutation.isPending,

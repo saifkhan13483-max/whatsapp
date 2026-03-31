@@ -50,12 +50,15 @@ export default function ConnectWhatsAppScreen() {
   const {
     connectionStatus,
     requestPairingCode,
+    requestPairingCodeError,
     isRequestingCode,
     disconnect,
     isDisconnecting,
     reconnect,
     isReconnecting,
     pairingCodeStatus,
+    codeSecondsLeft,
+    isCodeExpired,
     setIsPolling,
     refetchStatus,
   } = useWhatsAppConnection(currentStep === 2);
@@ -89,11 +92,22 @@ export default function ConnectWhatsAppScreen() {
         Toast.show({
           type: "error",
           text1: "Connection error",
-          text2: "Could not reach WhatsApp. Please try again.",
+          text2: "Could not reach WhatsApp. Please request a new code.",
         });
       }
     }
   }, [pairingCodeStatus, currentStep]);
+
+  useEffect(() => {
+    if (requestPairingCodeError && currentStep === 1) {
+      Toast.show({
+        type: "error",
+        text1: "Failed to get pairing code",
+        text2: requestPairingCodeError,
+        visibilityTime: 5000,
+      });
+    }
+  }, [requestPairingCodeError]);
 
   useEffect(() => {
     if (connectionStatus?.status === "connected" && currentStep === 2) {
@@ -161,14 +175,8 @@ export default function ConnectWhatsAppScreen() {
       setPairingExpiresAt(result.expiresAt);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       animateStep(2);
-    } catch (e: any) {
+    } catch {
       startRetryCountdown();
-      Toast.show({
-        type: "error",
-        text1: "Failed to get pairing code",
-        text2: getPairingErrorMessage(e),
-        visibilityTime: 5000,
-      });
     }
   }
 
@@ -178,6 +186,7 @@ export default function ConnectWhatsAppScreen() {
       const result = await requestPairingCode(fullPhone);
       setPairingCode(result.pairingCode);
       setPairingExpiresAt(result.expiresAt);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (e: any) {
       Toast.show({
         type: "error",
@@ -254,11 +263,13 @@ export default function ConnectWhatsAppScreen() {
             onSubmit={handleGetPairingCode}
           />}
 
-          {currentStep === 2 && pairingCode && pairingExpiresAt && (
+          {currentStep === 2 && pairingCode && (
             <Step2
               colors={colors}
               pairingCode={pairingCode}
               expiresAt={pairingExpiresAt}
+              codeSecondsLeft={codeSecondsLeft}
+              isCodeExpired={isCodeExpired}
               isLoadingNew={isRequestingCode}
               onRequestNew={handleRequestNewCode}
               onLater={handleLaterPress}
@@ -353,6 +364,8 @@ function Step2({
   colors,
   pairingCode,
   expiresAt,
+  codeSecondsLeft,
+  isCodeExpired,
   isLoadingNew,
   onRequestNew,
   onLater,
@@ -363,6 +376,11 @@ function Step2({
     { num: "3", text: "Tap 'Link with phone number instead' and enter the code above", icon: "key" as const },
   ];
 
+  const mins = Math.floor(codeSecondsLeft / 60);
+  const secs = String(codeSecondsLeft % 60).padStart(2, "0");
+  const countdownLabel = `Code expires in ${mins}:${secs}`;
+  const isExpiringSoon = codeSecondsLeft > 0 && codeSecondsLeft <= 30;
+
   return (
     <Animated.View entering={FadeIn.duration(300)} style={styles.stepContent}>
       <Text style={[typography.h2, { color: colors.text, textAlign: "center" }]}>
@@ -372,11 +390,35 @@ function Step2({
         Open WhatsApp on your phone and follow the steps below
       </Text>
 
+      {isCodeExpired ? (
+        <View style={[styles.expiredBox, { backgroundColor: colors.error + "18", borderColor: colors.error + "50" }]}>
+          <Ionicons name="time-outline" size={20} color={colors.error} />
+          <Text style={[typography.bodyMedium, { color: colors.error, flex: 1 }]}>
+            Code expired. Request a new one to continue.
+          </Text>
+        </View>
+      ) : codeSecondsLeft > 0 ? (
+        <View style={[styles.countdownBox, {
+          backgroundColor: isExpiringSoon ? colors.error + "15" : colors.info + "15",
+          borderColor: isExpiringSoon ? colors.error + "40" : colors.info + "40",
+        }]}>
+          <Ionicons
+            name="timer-outline"
+            size={16}
+            color={isExpiringSoon ? colors.error : colors.info}
+          />
+          <Text style={[typography.small, { color: isExpiringSoon ? colors.error : colors.secondaryText }]}>
+            {countdownLabel}
+          </Text>
+        </View>
+      ) : null}
+
       <PairingCodeDisplay
-        code={pairingCode}
+        code={isCodeExpired ? "????????" : pairingCode}
         expiresAt={expiresAt}
         onRequestNew={onRequestNew}
         isLoadingNew={isLoadingNew}
+        dimmed={isCodeExpired}
       />
 
       <View style={[styles.instructionsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -620,6 +662,25 @@ const styles = StyleSheet.create({
   },
   laterBtn: {
     paddingVertical: spacing.sm,
+  },
+  countdownBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
+    borderRadius: 8,
+    borderWidth: 1,
+    width: "100%",
+  },
+  expiredBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    padding: spacing.base,
+    borderRadius: 10,
+    borderWidth: 1,
+    width: "100%",
   },
   successIconWrap: {
     width: 120,
