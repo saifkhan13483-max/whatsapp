@@ -130,116 +130,122 @@ export async function requestPairingCode(userId: number, phoneNumber: string): P
 
   const cleanPhone = phoneNumber.replace(/\D/g, "");
 
-  return new Promise(async (resolve, reject) => {
-    let resolved = false;
+  let connectionCloseReject: ((e: Error) => void) | null = null;
 
-    function fail(message: string, statusCode?: number) {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timeout);
-      destroySocket(userId);
-      const err = new Error(message);
-      if (statusCode) (err as any).statusCode = statusCode;
-      reject(err);
+  const connectionFailedPromise = new Promise<never>((_, reject) => {
+    connectionCloseReject = reject;
+  });
+
+  sock.ev.on("creds.update", saveCreds);
+
+  sock.ev.on("connection.update", async (update) => {
+    const { connection, lastDisconnect, isNewLogin } = update;
+
+    if (isNewLogin) {
+      entry.connectionAccepted = true;
     }
 
-    const timeout = setTimeout(() => {
-      fail("Could not reach WhatsApp. Please check your internet connection and try again.");
-    }, 15_000);
+    if (connection === "open") {
+      entry.connectionAccepted = true;
+      try {
+        const credsData = fs.readFileSync(path.join(sessionDir, "creds.json"), "utf8");
+        await db
+          .update(whatsappSessionsTable)
+          .set({
+            status: "connected",
+            connectedAt: new Date(),
+            lastActiveAt: new Date(),
+            sessionData: encrypt(credsData),
+            updatedAt: new Date(),
+          })
+          .where(eq(whatsappSessionsTable.userId, userId));
+      } catch (e) {
+        logger.error({ e }, "Failed to save WhatsApp session");
+      }
+    }
 
-    sock.ev.on("creds.update", saveCreds);
+    if (connection === "close") {
+      const baomStatusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const loggedOut = baomStatusCode === DisconnectReason.loggedOut;
 
-    sock.ev.on("connection.update", async (update) => {
-      const { connection, lastDisconnect, isNewLogin } = update;
-
-      if (isNewLogin) {
-        entry.connectionAccepted = true;
+      if (connectionCloseReject) {
+        const err = new Error("Could not connect to WhatsApp. Please try again.");
+        connectionCloseReject(err);
+        connectionCloseReject = null;
       }
 
-      if (connection === "open") {
-        entry.connectionAccepted = true;
-        try {
-          const credsData = fs.readFileSync(path.join(sessionDir, "creds.json"), "utf8");
-          await db
-            .update(whatsappSessionsTable)
-            .set({
-              status: "connected",
-              connectedAt: new Date(),
-              lastActiveAt: new Date(),
-              sessionData: encrypt(credsData),
-              updatedAt: new Date(),
-            })
-            .where(eq(whatsappSessionsTable.userId, userId));
-        } catch (e) {
-          logger.error({ e }, "Failed to save WhatsApp session");
-        }
+      if (loggedOut) {
+        await db
+          .update(whatsappSessionsTable)
+          .set({ status: "disconnected", updatedAt: new Date() })
+          .where(eq(whatsappSessionsTable.userId, userId));
+        activeSockets.delete(userId);
       }
+    }
+  });
 
-      if (connection === "close") {
-        const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-        const loggedOut = statusCode === DisconnectReason.loggedOut;
-
-        if (!resolved) {
-          fail("Could not connect to WhatsApp. Please try again.");
-          return;
-        }
-
-        if (loggedOut) {
-          await db
-            .update(whatsappSessionsTable)
-            .set({ status: "disconnected", updatedAt: new Date() })
-            .where(eq(whatsappSessionsTable.userId, userId));
-          activeSockets.delete(userId);
-        }
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      const err = new Error("Could not reach WhatsApp. Please check your internet connection and try again.");
+      reject(err);
+      if (connectionCloseReject) {
+        connectionCloseReject(err);
+        connectionCloseReject = null;
       }
-    });
+    }, 12_000);
+  });
 
-    try {
-      await new Promise<void>((r) => setTimeout(r, 1500));
-      const code = await sock.requestPairingCode(cleanPhone);
+  try {
+    await new Promise<void>((r) => setTimeout(r, 1200));
 
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timeout);
+    const code = await Promise.race([
+      sock.requestPairingCode(cleanPhone),
+      connectionFailedPromise,
+      timeoutPromise,
+    ]);
 
-      entry.pairingCode = code;
-      entry.pairingCodeExpiresAt = expiresAt;
+    connectionCloseReject = null;
 
-      const masked = maskPhone(phoneNumber);
+    entry.pairingCode = code;
+    entry.pairingCodeExpiresAt = expiresAt;
 
-      await db
-        .insert(whatsappSessionsTable)
-        .values({
-          userId,
+    const masked = maskPhone(phoneNumber);
+
+    await db
+      .insert(whatsappSessionsTable)
+      .values({
+        userId,
+        phoneNumber: encrypt(phoneNumber),
+        maskedPhone: masked,
+        status: "pending_pairing",
+        pairingCode: code,
+        pairingCodeExpiresAt: expiresAt,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: whatsappSessionsTable.userId,
+        set: {
           phoneNumber: encrypt(phoneNumber),
           maskedPhone: masked,
           status: "pending_pairing",
           pairingCode: code,
           pairingCodeExpiresAt: expiresAt,
           updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: whatsappSessionsTable.userId,
-          set: {
-            phoneNumber: encrypt(phoneNumber),
-            maskedPhone: masked,
-            status: "pending_pairing",
-            pairingCode: code,
-            pairingCodeExpiresAt: expiresAt,
-            updatedAt: new Date(),
-          },
-        });
+        },
+      });
 
-      resolve({ pairingCode: code, expiresAt: expiresAt.toISOString() });
-    } catch (e: any) {
-      const msg = e?.message ?? "WhatsApp server error";
-      if (msg.toLowerCase().includes("phone")) {
-        fail("This phone number doesn't appear to be registered on WhatsApp.", 400);
-      } else {
-        fail("Could not connect to WhatsApp. Please try again.");
-      }
+    return { pairingCode: code, expiresAt: expiresAt.toISOString() };
+  } catch (e: any) {
+    connectionCloseReject = null;
+    destroySocket(userId);
+    const msg: string = e?.message ?? "WhatsApp server error";
+    if (msg.toLowerCase().includes("phone")) {
+      const err = new Error("This phone number doesn't appear to be registered on WhatsApp.");
+      (err as any).statusCode = 400;
+      throw err;
     }
-  });
+    throw new Error(msg);
+  }
 }
 
 export async function getConnectionStatus(userId: number): Promise<{
