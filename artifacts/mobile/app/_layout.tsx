@@ -9,7 +9,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useRef, useState } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -36,8 +36,6 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     async function route() {
       if (authLoading) return;
 
-      // Always read fresh from storage so writes by the onboarding screen
-      // are immediately visible here without stale state.
       const done = !!(await getItem<boolean>(StorageKeys.ONBOARDING_DONE));
       setReady(true);
 
@@ -98,8 +96,32 @@ export default function RootLayout() {
   const [fontTimeout, setFontTimeout] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Suppress the fontfaceobserver "Xms timeout exceeded" unhandled rejection
+  // that fires on web when Google Fonts CDN is unreachable. The app already
+  // has its own graceful fallback timeout below — this just stops the dev
+  // error overlay from appearing.
   useEffect(() => {
-    timeoutRef.current = setTimeout(() => setFontTimeout(true), 3000);
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+
+    function handleUnhandledRejection(event: PromiseRejectionEvent) {
+      const msg: string =
+        event?.reason?.message ??
+        event?.reason?.toString?.() ??
+        "";
+      if (msg.includes("timeout exceeded") || msg.toLowerCase().includes("fontface")) {
+        event.preventDefault();
+      }
+    }
+
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+    return () => window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+  }, []);
+
+  // Show app with system fonts after 2 s if Google Fonts CDN hasn't responded.
+  // This fires well before fontfaceobserver's own 6 s timeout, preventing the
+  // unhandled-rejection from ever being queued.
+  useEffect(() => {
+    timeoutRef.current = setTimeout(() => setFontTimeout(true), 2000);
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
