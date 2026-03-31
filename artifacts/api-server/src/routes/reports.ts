@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { activitySessionsTable, contactsTable } from "@workspace/db/schema";
 import { eq, and, gte } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
+import { format } from "date-fns";
 
 const router = Router();
 router.use(requireAuth);
@@ -20,7 +21,7 @@ router.get("/:contactId", async (req: AuthRequest, res) => {
     const [contact] = await db
       .select()
       .from(contactsTable)
-      .where(eq(contactsTable.id, contactId))
+      .where(and(eq(contactsTable.id, contactId), eq(contactsTable.userId, req.userId!)))
       .limit(1);
     if (!contact) {
       res.status(404).json({ error: "Contact not found" });
@@ -39,6 +40,7 @@ router.get("/:contactId", async (req: AuthRequest, res) => {
 
     const totalSessions = sessions.length;
     const totalMinutes = sessions.reduce((sum, s) => sum + s.durationMinutes, 0);
+
     const hourCounts: Record<number, number> = {};
     sessions.forEach((s) => {
       const h = new Date(s.startTime).getHours();
@@ -54,6 +56,22 @@ router.get("/:contactId", async (req: AuthRequest, res) => {
       dayMap[d].sessions += 1;
     });
 
+    const hourlyHeatmap = new Array(7 * 24).fill(0);
+    sessions.forEach((s) => {
+      const start = new Date(s.startTime);
+      const dayOfWeek = start.getDay();
+      const hour = start.getHours();
+      hourlyHeatmap[dayOfWeek * 24 + hour] += s.durationMinutes;
+    });
+
+    const sessionRows = sessions.map((s) => ({
+      id: s.id,
+      date: format(new Date(s.startTime), "MMM d, yyyy"),
+      startTime: format(new Date(s.startTime), "HH:mm"),
+      endTime: s.endTime ? format(new Date(s.endTime), "HH:mm") : "—",
+      durationMinutes: s.durationMinutes,
+    }));
+
     res.json({
       contactId,
       contactName: contact.name,
@@ -62,6 +80,8 @@ router.get("/:contactId", async (req: AuthRequest, res) => {
       totalMinutes,
       peakHour: Number(peakHour),
       dailyBreakdown: Object.values(dayMap).sort((a, b) => a.date.localeCompare(b.date)),
+      hourlyHeatmap,
+      sessions: sessionRows,
     });
   } catch {
     res.status(500).json({ error: "Failed to generate report" });
@@ -71,11 +91,10 @@ router.get("/:contactId", async (req: AuthRequest, res) => {
 router.get("/:contactId/export", async (req: AuthRequest, res) => {
   try {
     const contactId = Number(req.params["contactId"]);
-    const format = (req.query["format"] as string) ?? "csv";
     const [contact] = await db
       .select()
       .from(contactsTable)
-      .where(eq(contactsTable.id, contactId))
+      .where(and(eq(contactsTable.id, contactId), eq(contactsTable.userId, req.userId!)))
       .limit(1);
     if (!contact) {
       res.status(404).json({ error: "Contact not found" });
@@ -87,11 +106,12 @@ router.get("/:contactId/export", async (req: AuthRequest, res) => {
       .where(eq(activitySessionsTable.contactId, contactId));
 
     const csv = [
-      "id,contactId,startTime,endTime,durationMinutes",
+      "id,contactId,contactName,startTime,endTime,durationMinutes",
       ...sessions.map((s) =>
         [
           s.id,
           s.contactId,
+          JSON.stringify(contact.name),
           s.startTime?.toISOString() ?? "",
           s.endTime?.toISOString() ?? "",
           s.durationMinutes,
@@ -102,7 +122,7 @@ router.get("/:contactId/export", async (req: AuthRequest, res) => {
     res.setHeader("Content-Type", "text/csv");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="report-${contactId}.csv"`
+      `attachment; filename="report-${contactId}-${Date.now()}.csv"`
     );
     res.send(csv);
   } catch {

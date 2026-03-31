@@ -162,10 +162,18 @@ export default function ContactDetailScreen() {
   }, [contact?.notes]);
 
   useEffect(() => {
-    if (!(contact as any)?.isOnline) return;
+    if (!(contact as any)?.isOnline) {
+      setTimerSecs(0);
+      return;
+    }
+    const activeSession = sessions.find((s) => !s.endTime);
+    const elapsed = activeSession
+      ? Math.max(0, Math.floor((Date.now() - new Date(activeSession.startTime).getTime()) / 1000))
+      : 0;
+    setTimerSecs(elapsed);
     const t = setInterval(() => setTimerSecs((s) => s + 1), 1000);
     return () => clearInterval(t);
-  }, [(contact as any)?.isOnline]);
+  }, [(contact as any)?.isOnline, sessions.length]);
 
   function handleFavoriteToggle() {
     setIsFavorite((f) => !f);

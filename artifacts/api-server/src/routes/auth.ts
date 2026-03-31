@@ -47,8 +47,7 @@ router.post("/register", async (req, res) => {
       maxAge: 30 * 24 * 60 * 60 * 1000,
     });
     res.json({ id: user.id, username: user.username, email: user.email });
-  } catch (err) {
-    console.error("Registration error:", err);
+  } catch {
     res.status(500).json({ error: "Registration failed" });
   }
 });

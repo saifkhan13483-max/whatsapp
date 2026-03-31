@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Platform,
   RefreshControl,
+  Alert,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { Ionicons, Feather } from "@expo/vector-icons";
@@ -17,7 +18,7 @@ import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/useColors";
 import { useContacts } from "@/hooks/useContacts";
-import { useReport } from "@/hooks/useReports";
+import { useReport, exportReport } from "@/hooks/useReports";
 import { ChipFilter } from "@/components/ui/ChipFilter";
 import { StatCard } from "@/components/ui/StatCard";
 import { BarChart } from "@/components/ui/BarChart";
@@ -107,11 +108,26 @@ export default function ReportsScreen() {
   const heatmapData: number[] = report?.hourlyHeatmap ?? new Array(7 * 24).fill(0);
 
   const handleExportCSV = async () => {
-    const canShare = await Sharing.isAvailableAsync();
-    if (!canShare) {
-      return;
+    try {
+      const canShare = await Sharing.isAvailableAsync();
+      if (!canShare) {
+        Alert.alert("Not supported", "Sharing is not available on this device.");
+        return;
+      }
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const blob = await exportReport(activeId);
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = (reader.result as string).split(",")[1];
+        const { FileSystem } = await import("expo-file-system");
+        const uri = FileSystem.cacheDirectory + `report-${activeId}-${Date.now()}.csv`;
+        await FileSystem.writeAsStringAsync(uri, base64!, { encoding: FileSystem.EncodingType.Base64 });
+        await Sharing.shareAsync(uri, { mimeType: "text/csv", dialogTitle: "Export Activity Report" });
+      };
+      reader.readAsDataURL(blob);
+    } catch {
+      Alert.alert("Export failed", "Could not export the report. Please try again.");
     }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const handleNavigateToCompare = () => {
@@ -423,12 +439,7 @@ export default function ReportsScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.exportBtn, { backgroundColor: colors.blue + "20", borderColor: colors.blue, borderWidth: 1 }]}
-              onPress={async () => {
-                const canShare = await Sharing.isAvailableAsync();
-                if (canShare) {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                }
-              }}
+              onPress={handleExportCSV}
               accessibilityLabel="Share report"
             >
               <Feather name="share-2" size={18} color={colors.blue} />

@@ -47,6 +47,15 @@ router.get("/conversations", async (req: AuthRequest, res) => {
 router.get("/messages/:contactId", async (req: AuthRequest, res) => {
   try {
     const contactId = Number(req.params["contactId"]);
+    const [owned] = await db
+      .select({ id: contactsTable.id })
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, contactId), eq(contactsTable.userId, req.userId!)))
+      .limit(1);
+    if (!owned) {
+      res.status(404).json({ error: "Contact not found" });
+      return;
+    }
     const page = Number(req.query["page"] ?? 1);
     const limit = Number(req.query["limit"] ?? 30);
     const offset = (page - 1) * limit;

@@ -321,7 +321,7 @@ export async function reconnect(userId: number): Promise<{ status: "connected" |
   const sessionDir = getSessionDir(userId);
 
   try {
-    const credsData = decrypt(row.sessionData);
+    const credsData = decrypt(row.sessionData!);
     fs.writeFileSync(path.join(sessionDir, "creds.json"), credsData, "utf8");
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);

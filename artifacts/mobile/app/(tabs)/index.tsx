@@ -28,7 +28,7 @@ import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/useColors";
 import { useWhatsAppConnection } from "@/hooks/useWhatsAppConnection";
-import { useContacts, useAddContact, useToggleFavorite } from "@/hooks/useContacts";
+import { useContacts, useAddContact, useToggleFavorite, useFavoriteContacts } from "@/hooks/useContacts";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useAuth } from "@/providers/AuthProvider";
 import { BadgeCount } from "@/components/ui/BadgeCount";
@@ -299,13 +299,18 @@ export default function DashboardScreen() {
 
   const { data: contacts = [], isLoading, refetch } = useContacts();
   const { data: notifications = [] } = useNotifications();
+  const { data: favoriteContacts = [] } = useFavoriteContacts();
   const toggleFavorite = useToggleFavorite();
+
+  const favoriteIds = useMemo(
+    () => new Set(favoriteContacts.map((c) => c.id)),
+    [favoriteContacts]
+  );
 
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [addSheetVisible, setAddSheetVisible] = useState(false);
-  const [favorites, setFavorites] = useState<Set<number>>(new Set());
 
   const onlineContacts = useMemo(() => contacts.filter((c) => (c as any).isOnline), [contacts]);
   const unreadCount = useMemo(() => (notifications ?? []).filter((n) => !n.read).length, [notifications]);
@@ -317,12 +322,6 @@ export default function DashboardScreen() {
   }
 
   function handleFavorite(id: number) {
-    setFavorites((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
     toggleFavorite.mutate(id);
     Haptics.selectionAsync();
   }
@@ -333,25 +332,25 @@ export default function DashboardScreen() {
         if (searchQuery && !c.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
         if (filter === "online") return (c as any).isOnline;
         if (filter === "offline") return !(c as any).isOnline;
-        if (filter === "favorites") return favorites.has(c.id);
+        if (filter === "favorites") return favoriteIds.has(c.id);
         if (filter === "recent") return !!(c as any).lastSeen;
         if (filter === "high") return ((c as any).sessionCount ?? 0) >= 5;
         if (filter === "never") return !(c as any).lastSeen && !(c as any).isOnline;
         return true;
       }),
-    [contacts, searchQuery, filter, favorites]
+    [contacts, searchQuery, filter, favoriteIds]
   );
 
   const renderContact = useCallback(
     ({ item }: { item: Contact }) => (
       <EnhancedContactCard
         contact={item as any}
-        isFavorite={favorites.has(item.id)}
+        isFavorite={favoriteIds.has(item.id)}
         onPress={() => router.push(`/contact/${item.id}`)}
         onFavorite={() => handleFavorite(item.id)}
       />
     ),
-    [favorites]
+    [favoriteIds]
   );
 
   const numColumns = isWide ? 2 : 1;

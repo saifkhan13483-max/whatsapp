@@ -311,6 +311,15 @@ router.get("/:id/hourly", async (req: AuthRequest, res) => {
 router.post("/:id/status", async (req: AuthRequest, res) => {
   try {
     const contactId = Number(req.params["id"]);
+    const [owned] = await db
+      .select({ id: contactsTable.id })
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, contactId), eq(contactsTable.userId, req.userId!)))
+      .limit(1);
+    if (!owned) {
+      res.status(404).json({ error: "Contact not found" });
+      return;
+    }
     const { status } = req.body;
     const isOnline = status === "online";
     const updates: Partial<typeof contactsTable.$inferInsert> = { isOnline };

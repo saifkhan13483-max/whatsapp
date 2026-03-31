@@ -47,9 +47,9 @@ Full-featured WhatsApp activity monitoring & parental control app.
 - **View Once Recovery**: 3-column media grid, filter chips (Photos/Videos/Voice), select mode with multi-select, full-screen viewer with prev/next, share
 - **Notifications/Alerts**: SectionList grouped Today/Yesterday/This Week/Older, swipe-right to Mark-Read, confirm-clear dialog
 - **Settings**: 8 complete sections — Security (biometric + auto-lock timer), Subscription, Notifications, DND (add/delete windows), Alerts (daily usage slider + spike), Theme, Data (export/import/delete account 3-step), More (links + dev easter egg at v7 taps)
-- **Contact Detail**: Per-contact stats, hourly activity charts, session data
+- **Contact Detail**: Per-contact stats, hourly activity charts, session data; timer initializes from active session elapsed time (not always 0)
 - **Family Dashboard**: Aggregated family monitoring overview
-- **Reports**: Avatar contact picker, date range picker, 4 stat cards, daily bar chart, hourly heatmap with legend, sortable sessions table (click header to sort), export CSV + share
+- **Reports**: Avatar contact picker, date range picker, 4 stat cards, daily bar chart, hourly heatmap with legend, sortable sessions table (click header to sort), working export CSV + share (uses expo-file-system + expo-sharing)
 - **Subscription**: Monthly/Annual billing toggle with "Save 40%" badge, 3 plan cards with feature lists and per-plan pricing, feature comparison table, money-back guarantee badge
 - **Keyword Alerts**: Add/manage keywords for content monitoring
 - **Contact Groups**: Organize contacts into groups
@@ -67,7 +67,8 @@ Full-featured WhatsApp activity monitoring & parental control app.
 - WhatsApp-inspired dark green color palette
 - `useColors()` hook for all theming (never hardcode hex values)
 - Liquid glass tab bars on iOS 26+, BlurView fallback on older iOS/Android
-- AsyncStorage for persistence (theme, onboarding, biometric lock, favorites, DND)
+- AsyncStorage for persistence (theme, onboarding, biometric lock, DND)
+- Favorites synced from backend via `useFavoriteContacts()` hook — not local state
 - Expo Haptics for feedback
 - Expo Local Authentication for biometric lock
 - Expo Notifications for push notifications

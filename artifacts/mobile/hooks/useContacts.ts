@@ -57,6 +57,7 @@ export function useToggleFavorite() {
       apiFetch(`/contacts/${id}/favorite`, { method: "POST" }).catch(() => {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["contacts", "favorites"] });
+      qc.invalidateQueries({ queryKey: ["contacts"] });
     },
   });
 }
