@@ -6,9 +6,16 @@ import {
   contactGroupsTable,
   contactGroupMembersTable,
   activitySessionsTable,
+  userSubscriptionsTable,
+  subscriptionPlansTable,
 } from "@workspace/db/schema";
-import { eq, and, gte, lte, sql, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, sql, inArray, count } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
+import {
+  subscribeContact,
+  removeTrackedContact,
+  getActiveSocket,
+} from "../services/presenceTracker.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -135,6 +142,37 @@ router.post("/", async (req: AuthRequest, res) => {
       res.status(400).json({ error: "name and phoneNumber are required" });
       return;
     }
+
+    const activeSub = await db
+      .select({ contactLimit: subscriptionPlansTable.contactLimit })
+      .from(userSubscriptionsTable)
+      .innerJoin(subscriptionPlansTable, eq(userSubscriptionsTable.planId, subscriptionPlansTable.id))
+      .where(
+        and(
+          eq(userSubscriptionsTable.userId, req.userId!),
+          eq(userSubscriptionsTable.isActive, true)
+        )
+      )
+      .limit(1);
+
+    const contactLimit = activeSub[0]?.contactLimit ?? 3;
+
+    if (contactLimit !== -1) {
+      const [{ value: existingCount }] = await db
+        .select({ value: count() })
+        .from(contactsTable)
+        .where(eq(contactsTable.userId, req.userId!));
+
+      if (existingCount >= contactLimit) {
+        res.status(403).json({
+          error: `Contact limit reached (${contactLimit}). Upgrade your plan to add more contacts.`,
+          code: "CONTACT_LIMIT_REACHED",
+          limit: contactLimit,
+        });
+        return;
+      }
+    }
+
     const [contact] = await db
       .insert(contactsTable)
       .values({
@@ -145,6 +183,12 @@ router.post("/", async (req: AuthRequest, res) => {
         alertEnabled: alertEnabled ?? true,
       })
       .returning();
+
+    const sock = getActiveSocket(req.userId!);
+    if (sock) {
+      subscribeContact(req.userId!, resolvedPhone, sock).catch(() => {});
+    }
+
     res.json(contact);
   } catch (err) {
     console.error("Create contact error:", err);
@@ -192,9 +236,20 @@ router.put("/:id", async (req: AuthRequest, res) => {
 router.delete("/:id", async (req: AuthRequest, res) => {
   try {
     const id = Number(req.params["id"]);
+    const [contact] = await db
+      .select({ phoneNumber: contactsTable.phoneNumber })
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, id), eq(contactsTable.userId, req.userId!)))
+      .limit(1);
+
     await db
       .delete(contactsTable)
       .where(and(eq(contactsTable.id, id), eq(contactsTable.userId, req.userId!)));
+
+    if (contact) {
+      removeTrackedContact(req.userId!, contact.phoneNumber);
+    }
+
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Failed to delete contact" });

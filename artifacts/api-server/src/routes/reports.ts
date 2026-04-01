@@ -4,9 +4,74 @@ import { activitySessionsTable, contactsTable } from "@workspace/db/schema";
 import { eq, and, gte } from "drizzle-orm";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
 import { format } from "date-fns";
+import {
+  getHourlyHeatmap,
+  getDailySummary,
+  getWeeklyReport,
+} from "../services/analyticsService.js";
 
 const router = Router();
 router.use(requireAuth);
+
+router.get("/heatmap/:contactId", async (req: AuthRequest, res) => {
+  try {
+    const contactId = Number(req.params["contactId"]);
+    const [contact] = await db
+      .select()
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, contactId), eq(contactsTable.userId, req.userId!)))
+      .limit(1);
+    if (!contact) {
+      res.status(404).json({ error: "Contact not found" });
+      return;
+    }
+    const from = req.query["from"] ? new Date(req.query["from"] as string) : new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const to = req.query["to"] ? new Date(req.query["to"] as string) : new Date();
+    const heatmap = await getHourlyHeatmap(req.userId!, contactId, from, to);
+    res.json({ contactId, contactName: contact.name, from: from.toISOString(), to: to.toISOString(), heatmap });
+  } catch {
+    res.status(500).json({ error: "Failed to generate heatmap" });
+  }
+});
+
+router.get("/daily/:contactId", async (req: AuthRequest, res) => {
+  try {
+    const contactId = Number(req.params["contactId"]);
+    const [contact] = await db
+      .select()
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, contactId), eq(contactsTable.userId, req.userId!)))
+      .limit(1);
+    if (!contact) {
+      res.status(404).json({ error: "Contact not found" });
+      return;
+    }
+    const date = req.query["date"] ? new Date(req.query["date"] as string) : new Date();
+    const summary = await getDailySummary(req.userId!, contactId, date);
+    res.json({ contactId, contactName: contact.name, date: date.toISOString().split("T")[0], ...summary });
+  } catch {
+    res.status(500).json({ error: "Failed to generate daily report" });
+  }
+});
+
+router.get("/weekly/:contactId", async (req: AuthRequest, res) => {
+  try {
+    const contactId = Number(req.params["contactId"]);
+    const [contact] = await db
+      .select()
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, contactId), eq(contactsTable.userId, req.userId!)))
+      .limit(1);
+    if (!contact) {
+      res.status(404).json({ error: "Contact not found" });
+      return;
+    }
+    const report = await getWeeklyReport(req.userId!, contactId);
+    res.json({ contactId, contactName: contact.name, ...report });
+  } catch {
+    res.status(500).json({ error: "Failed to generate weekly report" });
+  }
+});
 
 router.get("/:contactId", async (req: AuthRequest, res) => {
   try {

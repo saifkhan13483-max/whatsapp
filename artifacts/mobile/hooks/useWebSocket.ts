@@ -108,8 +108,11 @@ function handleCacheInvalidation(event: WsEvent, queryClient: ReturnType<typeof 
     case "session_connected":
     case "session_disconnected":
     case "session_reconnecting":
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-connection-status"] });
+      break;
     case "pairing_code_generated":
-      queryClient.invalidateQueries({ queryKey: ["whatsapp-status"] });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-connection-status"] });
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-pairing-code-status"] });
       break;
     case "status_change":
       queryClient.invalidateQueries({ queryKey: ["contacts"] });

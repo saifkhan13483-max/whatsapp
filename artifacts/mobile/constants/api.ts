@@ -33,6 +33,9 @@ export const API = {
   REPORTS: {
     BY_CONTACT: (id: number) => `/reports/${id}`,
     EXPORT: (id: number) => `/reports/${id}/export`,
+    HEATMAP: (id: number) => `/reports/heatmap/${id}`,
+    DAILY: (id: number) => `/reports/daily/${id}`,
+    WEEKLY: (id: number) => `/reports/weekly/${id}`,
   },
   SUBSCRIPTION: {
     PLANS: "/subscription/plans",
