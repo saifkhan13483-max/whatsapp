@@ -27,6 +27,26 @@ export async function checkKeywordAlerts(
     if (!rule.keyword) continue;
     if (!lower.includes(rule.keyword.toLowerCase())) continue;
 
+    let contactName: string | null = null;
+    if (rule.contactId) {
+      const [c] = await db
+        .select({ name: contactsTable.name })
+        .from(contactsTable)
+        .where(eq(contactsTable.id, rule.contactId))
+        .limit(1);
+      contactName = c?.name ?? null;
+    }
+
+    const chatPhone = chatJid.split("@")[0] ?? chatJid;
+    if (!contactName) {
+      const [c] = await db
+        .select({ name: contactsTable.name })
+        .from(contactsTable)
+        .where(and(eq(contactsTable.userId, userId), eq(contactsTable.phoneNumber, chatPhone)))
+        .limit(1);
+      contactName = c?.name ?? chatPhone;
+    }
+
     const [event] = await db
       .insert(alertEventsTable)
       .values({
@@ -40,14 +60,15 @@ export async function checkKeywordAlerts(
       userId,
       title: "Keyword Alert",
       body: `Keyword "${rule.keyword}" detected in a message`,
-      type: "alert",
+      type: "keyword",
+      contactName: contactName ?? undefined,
     });
 
     broadcast(userId, {
       type: "alert_triggered",
       alertId: rule.id,
       alertType: "keyword",
-      contactName: chatJid.split("@")[0] ?? chatJid,
+      contactName: contactName ?? chatPhone,
       details: `Keyword "${rule.keyword}" detected`,
       eventId: event?.id,
       timestamp: new Date().toISOString(),
@@ -106,9 +127,10 @@ export async function checkOnlineThresholdAlerts(
 
     await db.insert(notificationsTable).values({
       userId,
-      title: "Online Time Alert",
-      body: `${contactName} has been online for ${totalMinutesToday} minutes today (threshold: ${rule.thresholdMinutes} min)`,
-      type: "alert",
+      title: "Screen Time Alert",
+      body: `${contactName} has been online for ${totalMinutesToday} min today (limit: ${rule.thresholdMinutes} min)`,
+      type: "limit_exceeded",
+      contactName,
     });
 
     broadcast(userId, {
@@ -167,8 +189,9 @@ export async function checkLateNightAlerts(
     await db.insert(notificationsTable).values({
       userId,
       title: "Late Night Alert",
-      body: `${contactName} is online during restricted hours (${rule.startHour}:00 - ${rule.endHour}:00)`,
-      type: "alert",
+      body: `${contactName} is online during restricted hours (${rule.startHour}:00–${rule.endHour}:00)`,
+      type: "late_night",
+      contactName,
     });
 
     broadcast(userId, {

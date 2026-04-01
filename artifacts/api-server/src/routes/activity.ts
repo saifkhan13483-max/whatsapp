@@ -152,6 +152,59 @@ router.get("/comparisons", async (req: AuthRequest, res) => {
   }
 });
 
+router.get("/timeline/:contactId", async (req: AuthRequest, res) => {
+  try {
+    const contactId = Number(req.params["contactId"]);
+    const fromParam = req.query["from"] as string | undefined;
+    const toParam = req.query["to"] as string | undefined;
+    const from = fromParam ? new Date(fromParam) : new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const to = toParam ? new Date(toParam) : new Date();
+
+    const [contact] = await db
+      .select()
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, contactId), eq(contactsTable.userId, req.userId!)))
+      .limit(1);
+
+    if (!contact) {
+      res.status(404).json({ error: "Contact not found" });
+      return;
+    }
+
+    const sessions = await db
+      .select()
+      .from(activitySessionsTable)
+      .where(
+        and(
+          eq(activitySessionsTable.contactId, contactId),
+          gte(activitySessionsTable.startTime, from),
+          sql`${activitySessionsTable.startTime} <= ${to}`
+        )
+      )
+      .orderBy(activitySessionsTable.startTime);
+
+    const events = sessions.flatMap((s) => {
+      const evs: { type: "online" | "offline"; timestamp: string; durationMinutes?: number }[] = [];
+      evs.push({ type: "online", timestamp: s.startTime.toISOString() });
+      if (s.endTime) {
+        evs.push({ type: "offline", timestamp: s.endTime.toISOString(), durationMinutes: s.durationMinutes });
+      }
+      return evs;
+    });
+
+    res.json({
+      contactId,
+      contactName: contact.name,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      events,
+      sessions,
+    });
+  } catch {
+    res.status(500).json({ error: "Failed to fetch contact timeline" });
+  }
+});
+
 router.get("/timeline", async (req: AuthRequest, res) => {
   try {
     const dateParam = req.query["date"] as string;

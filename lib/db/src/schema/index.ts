@@ -107,6 +107,7 @@ export const notificationsTable = pgTable("notifications", {
   title: varchar("title", { length: 200 }).notNull(),
   body: text("body").default(""),
   type: varchar("type", { length: 50 }).default("info").notNull(),
+  contactName: varchar("contact_name", { length: 100 }),
   isRead: boolean("is_read").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });

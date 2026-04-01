@@ -204,6 +204,3 @@ export async function subscribeContact(userId: number, phoneNumber: string, sock
   }
 }
 
-export function getActiveSocket(_userId: number): WASocket | undefined {
-  return undefined;
-}
