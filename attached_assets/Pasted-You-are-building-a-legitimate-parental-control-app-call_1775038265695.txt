@@ -1,0 +1,354 @@
+You are building a legitimate parental control app called "WaTracker Pro" where the PARENT links their OWN WhatsApp account (via WhatsApp's official Linked Device / Companion Device feature) and the app then monitors presence, chats, and media through that linked session — exactly like iToolab WaTracker on Google Play (com.luckydog.walasts).
+
+IMPORTANT CONTEXT: The parent is linking THEIR OWN WhatsApp to the app. The app acts as a companion device to the parent's WhatsApp. It then uses Baileys' event system to observe incoming messages, presence changes of contacts, and view-once media — all data that WhatsApp already delivers to any linked device.
+
+====================================================================
+PROJECT ARCHITECTURE (already exists — do NOT restructure)
+====================================================================
+
+workspace/
+├── artifacts/
+│   ├── api-server/        @workspace/api-server   — Express REST + WS (port 8080)
+│   ├── mobile/            @workspace/mobile        — Expo React Native (port 8081)
+│   └── mockup-sandbox/    @workspace/mockup-sandbox — Vite component previewer
+└── lib/
+    ├── api-spec/           OpenAPI YAML (source of truth)
+    ├── api-client-react/   Generated TanStack Query hooks (consumed by mobile)
+    ├── api-zod/            Generated Zod validators (consumed by api-server)
+    └── db/                 Drizzle ORM + PostgreSQL schema
+
+Tech stack: Node.js, TypeScript, Express 5, ESBuild, @whiskeysockets/baileys 7.0.0-rc.9, Drizzle ORM + PostgreSQL, JWT httpOnly cookies (30-day, bcrypt), native ws WebSocket, Pino logging, Expo SDK 54 + Expo Router, TanStack Query + Context API, Orval codegen.
+
+====================================================================
+TASK: BUILD THE COMPLETE WHATSAPP ACCOUNT LINKING SYSTEM
+====================================================================
+
+Implement the following 6 subsystems end-to-end (backend services, database schema, API endpoints, WebSocket events, and mobile screens). Every file must be production-ready TypeScript, fully typed, with error handling.
+
+--------------------------------------------------------------
+SUBSYSTEM 1: WHATSAPP PAIRING CODE LINKING (Baileys)
+--------------------------------------------------------------
+
+Goal: Parent enters their phone number → server creates a Baileys socket → calls requestPairingCode(phone) → returns an 8-digit code → parent enters this code in WhatsApp app → device is linked.
+
+Implementation details:
+
+A) whatsappSessionManager.ts (api-server/src/services/)
+   - Manages a Map<userId, WASocket> of active sockets in memory
+   - createSession(userId, phoneNumber):
+     1. Generate fresh auth state using the custom dbAuthState (see below)
+     2. Create socket: makeWASocket({ auth, browser: ['WaTracker Pro', 'Chrome', '127.0.0'], markOnlineOnConnect: false, printQRInTerminal: false })
+     3. IMMEDIATELY call sock.requestPairingCode(phoneNumber) — BEFORE any await or waitForSocketOpen(). This is CRITICAL: if you await anything after makeWASocket before requesting the pairing code, Baileys commits to QR-code mode during the noise-protocol handshake and WhatsApp will reject the pairing code with "Couldn't link device"
+     4. Store the returned pairing code in the DB (whatsapp_sessions.pairingCode) with a 60-second expiry timestamp
+     5. Broadcast { type: 'pairing_code_generated', code } over WebSocket to the user
+   - Register event handlers on the socket:
+     • sock.ev.on('connection.update', ...) — handle connection state changes:
+       - connection === 'open': update DB status to 'connected', broadcast { type: 'session_connected' }
+       - connection === 'close': check lastDisconnect.error statusCode:
+         * DisconnectReason.loggedOut (401): delete session from DB, broadcast { type: 'session_disconnected', reason: 'logged_out' }
+         * DisconnectReason.connectionReplaced: same as loggedOut
+         * Other codes: attempt reconnect with exponential backoff (max 5 retries, delays: 2s, 4s, 8s, 16s, 32s), update DB reconnectAttempts, broadcast { type: 'session_reconnecting', attempt }
+     • sock.ev.on('creds.update', ...) — save updated credentials to DB immediately
+   - reconnectSession(userId): load encrypted session from DB, recreate socket with existing auth state
+   - disconnectSession(userId): call sock.logout(), delete session from DB
+   - autoReconnectAllSessions(): on server startup, query all whatsapp_sessions with status='connected', reconnect each one sequentially with 2-second delays between them
+
+B) dbAuthState.ts (api-server/src/services/)
+   - Implements Baileys' AuthenticationState interface backed by PostgreSQL
+   - Encryption: AES-256-CBC using a key derived from process.env.SESSION_ENCRYPTION_KEY (NOT JWT_SECRET — separate concern) via crypto.scryptSync(key, 'watracker-salt', 32)
+   - initAuthState(userId): loads existing encrypted sessionData from whatsapp_sessions, decrypts, deserializes using BufferJSON.reviver to reconstruct Uint8Arrays, returns { state, saveCreds }
+   - saveCreds callback: serializes full AuthenticationCreds + Signal keyStore using BufferJSON.replacer, encrypts with AES-256-CBC, upserts into whatsapp_sessions.sessionData
+   - Signal key operations (get, set, remove) for preKeys, sessions, senderKeys, appStateSyncKeys, appStateVersions, senderKeyMemory — each reading/writing from the encrypted sessionData blob
+
+C) Rate limiting:
+   - In-memory Map<userId, { count, windowStart }> limiting pairing code requests to 3 per 10-minute window
+   - Return 429 with retryAfter header when exceeded
+
+D) Database table — whatsapp_sessions:
+   - id: serial primary key
+   - userId: integer references users(id) ON DELETE CASCADE, unique
+   - status: enum('disconnected', 'connecting', 'connected', 'reconnecting') default 'disconnected'
+   - phoneNumber: varchar(20)
+   - pairingCode: varchar(10) nullable
+   - pairingCodeExpiresAt: timestamp nullable
+   - sessionData: text (encrypted JSON blob)
+   - reconnectAttempts: integer default 0
+   - lastConnectedAt: timestamp nullable
+   - lastDisconnectedAt: timestamp nullable
+   - createdAt: timestamp default now()
+   - updatedAt: timestamp default now()
+
+E) API endpoints:
+   - POST /api/whatsapp/request-pairing-code  { phoneNumber: string }
+     → validates phone format (E.164), rate-limit check, calls createSession, returns { pairingCode, expiresAt }
+   - GET  /api/whatsapp/connection-status
+     → returns current session status, phoneNumber, lastConnectedAt from DB
+   - GET  /api/whatsapp/pairing-code-status
+     → returns { pairingCode, expired: boolean, expiresAt } or null if no pending code
+   - POST /api/whatsapp/disconnect
+     → calls disconnectSession, returns { success: true }
+   - POST /api/whatsapp/reconnect
+     → calls reconnectSession, returns { success: true }
+
+--------------------------------------------------------------
+SUBSYSTEM 2: CONTACT PRESENCE TRACKING (Baileys native)
+--------------------------------------------------------------
+
+Goal: Once WhatsApp is linked, the parent adds contacts to track. The server subscribes to their presence via Baileys and logs every online/offline transition.
+
+Implementation details:
+
+A) presenceTracker.ts (api-server/src/services/)
+   - When a contact is added for tracking:
+     1. Call sock.presenceSubscribe(contactJid) where contactJid = phoneNumber + '@s.whatsapp.net'
+     2. Store the subscription in a Set per userId
+   - Listen to sock.ev.on('presence.update', ({ id, presences })):
+     For each presence update matching a tracked contact:
+     1. Determine new status: presences[jid].lastKnownPresence ('available' | 'unavailable')
+     2. Compare with last known status in memory cache to avoid duplicate logs
+     3. If changed: insert into activity_logs table { userId, contactId, status, timestamp, lastSeen }
+     4. Broadcast over WebSocket: { type: 'status_change', contactId, contactName, status, timestamp }
+   - Presence re-subscription: WhatsApp presence subscriptions expire. Re-subscribe every 10 minutes for all tracked contacts using setInterval
+   - Handle 'composing' and 'recording' presence types — store as separate events if desired, but always map to online
+
+B) Database table — tracked_contacts:
+   - id: serial primary key
+   - userId: integer references users(id) ON DELETE CASCADE
+   - phoneNumber: varchar(20) not null
+   - displayName: varchar(100)
+   - avatarUrl: text nullable
+   - isFavorite: boolean default false
+   - groupName: varchar(100) nullable
+   - status: enum('online', 'offline', 'unknown') default 'unknown'
+   - lastSeen: timestamp nullable
+   - createdAt: timestamp default now()
+   - UNIQUE(userId, phoneNumber)
+
+C) Database table — activity_logs:
+   - id: serial primary key
+   - userId: integer references users(id) ON DELETE CASCADE
+   - contactId: integer references tracked_contacts(id) ON DELETE CASCADE
+   - status: enum('online', 'offline', 'typing', 'recording')
+   - timestamp: timestamp not null default now()
+   - duration: integer nullable (seconds — calculated when going offline: offline_timestamp - last_online_timestamp)
+   - INDEX on (userId, contactId, timestamp) for efficient timeline queries
+
+D) API endpoints:
+   - POST   /api/contacts          { phoneNumber, displayName, groupName? }
+   - GET    /api/contacts          → list all tracked contacts with current status
+   - GET    /api/contacts/:id      → single contact with recent activity
+   - PUT    /api/contacts/:id      { displayName?, isFavorite?, groupName? }
+   - DELETE /api/contacts/:id      → unsubscribe presence, remove from tracking
+   - GET    /api/contacts/:id/timeline?from=&to=  → activity_logs for date range
+   - POST   /api/tracker/track     { contactId } — explicitly start tracking (subscribe presence)
+   - DELETE /api/tracker/untrack/:contactId — stop tracking
+
+--------------------------------------------------------------
+SUBSYSTEM 3: CHAT MESSAGE MONITORING (Baileys messages.upsert)
+--------------------------------------------------------------
+
+Goal: Since the parent's WhatsApp is linked as a companion device, all incoming AND outgoing messages are delivered to the Baileys session via the messages.upsert event. The app stores and displays these.
+
+Implementation details:
+
+A) messageHandler.ts (api-server/src/services/)
+   - Listen to sock.ev.on('messages.upsert', ({ messages, type })):
+     For each message where type === 'notify':
+     1. Extract: message key (remoteJid, fromMe, id), messageTimestamp, pushName
+     2. Determine message content type: conversation (text), imageMessage, videoMessage, audioMessage, documentMessage, viewOnceMessage, extendedTextMessage, etc.
+     3. For text messages: store message.conversation or message.extendedTextMessage.text
+     4. For media messages: download media using downloadMediaMessage(message, ...), store file to local disk (uploads/{userId}/{messageId}.{ext}), store file path in DB
+     5. For view-once messages (viewOnceMessage or viewOnceMessageV2):
+        - The message arrives with the media key and URL
+        - Download immediately using downloadMediaMessage before the media expires
+        - Save to uploads/{userId}/view-once/{messageId}.{ext}
+        - Mark as viewOnce: true in DB so mobile UI can show the "view once" badge
+     6. Insert into chat_messages table
+     7. Broadcast over WebSocket: { type: 'new_message', chatJid, messageId, preview }
+
+B) Database table — chat_messages:
+   - id: serial primary key
+   - userId: integer references users(id) ON DELETE CASCADE
+   - chatJid: varchar(50) not null (the remote chat JID)
+   - messageId: varchar(100) not null unique
+   - fromMe: boolean not null
+   - senderJid: varchar(50)
+   - senderName: varchar(100)
+   - messageType: enum('text', 'image', 'video', 'audio', 'document', 'sticker', 'contact', 'location', 'other')
+   - textContent: text nullable
+   - mediaPath: text nullable (local file path)
+   - mediaMimeType: varchar(50) nullable
+   - mediaSize: integer nullable
+   - isViewOnce: boolean default false
+   - isForwarded: boolean default false
+   - quotedMessageId: varchar(100) nullable
+   - timestamp: timestamp not null
+   - createdAt: timestamp default now()
+   - INDEX on (userId, chatJid, timestamp)
+
+C) API endpoints:
+   - GET /api/chats                          → list all chats (grouped by chatJid) with last message preview
+   - GET /api/chats/:chatJid/messages?page=&limit=  → paginated messages for a chat
+   - GET /api/chats/media/:messageId         → serve media file (with auth check)
+   - GET /api/chats/view-once                → list all captured view-once messages
+   - GET /api/chats/search?q=               → full-text search across textContent
+
+--------------------------------------------------------------
+SUBSYSTEM 4: USAGE ANALYTICS & REPORTS
+--------------------------------------------------------------
+
+Goal: Generate screen-time reports, hourly heatmaps, and usage pattern analysis from activity_logs data.
+
+Implementation details:
+
+A) analyticsService.ts:
+   - getDailySummary(userId, contactId, date):
+     Query activity_logs, calculate: totalOnlineTime (sum of durations), sessionCount, firstOnline, lastOffline, longestSession
+   - getHourlyHeatmap(userId, contactId, startDate, endDate):
+     Aggregate activity_logs into 24-hour buckets, return array of { hour: 0-23, totalMinutesOnline, sessionCount } for heatmap visualization
+   - getWeeklyReport(userId, contactId):
+     7-day rolling summary with day-by-day breakdown
+   - getFamilySummary(userId):
+     Aggregate across ALL tracked contacts: who was most active, total family screen time, alerts triggered
+
+B) API endpoints:
+   - GET /api/activity/family-summary?date=       → all-contacts summary
+   - GET /api/activity/timeline/:contactId?from=&to= → detailed timeline
+   - GET /api/reports/heatmap/:contactId?from=&to=  → hourly heatmap data
+   - GET /api/reports/daily/:contactId?date=       → single-day report
+   - GET /api/reports/weekly/:contactId            → 7-day report
+   - GET /api/reports/export/:contactId?from=&to=&format=csv → CSV download
+
+--------------------------------------------------------------
+SUBSYSTEM 5: ALERTS SYSTEM
+--------------------------------------------------------------
+
+Goal: Parent can set keyword-based alerts on chat content, online-time thresholds, and late-night usage alerts.
+
+A) Database table — alerts:
+   - id: serial primary key
+   - userId: integer references users(id) ON DELETE CASCADE
+   - type: enum('keyword', 'online_threshold', 'late_night', 'offline_duration')
+   - contactId: integer nullable references tracked_contacts(id) (null = all contacts)
+   - keyword: varchar(200) nullable (for keyword type)
+   - thresholdMinutes: integer nullable (for online_threshold type)
+   - startHour: integer nullable (for late_night: e.g., 23)
+   - endHour: integer nullable (for late_night: e.g., 6)
+   - isEnabled: boolean default true
+   - createdAt: timestamp default now()
+
+B) alertEngine.ts:
+   - On every new message (from messageHandler): check keyword alerts, if textContent contains keyword → insert alert_events, broadcast WebSocket { type: 'alert_triggered', alertId, ... }
+   - On every presence change: check online_threshold (if total online time today exceeds threshold) and late_night (if coming online during restricted hours)
+
+C) Database table — alert_events:
+   - id, alertId, contactId, triggeredAt, details (JSON), isRead boolean
+
+D) API endpoints:
+   - CRUD on /api/alerts
+   - GET /api/alerts/events?unreadOnly=true → triggered alert events
+
+--------------------------------------------------------------
+SUBSYSTEM 6: MOBILE APP SCREENS (Expo React Native)
+--------------------------------------------------------------
+
+Implement these screens using Expo Router file-based navigation, TanStack Query for server state, and the generated api-client-react hooks:
+
+A) Tab Layout (5 tabs):
+   (tabs)/home.tsx     — Dashboard
+   (tabs)/chats.tsx    — Chat list
+   (tabs)/media.tsx    — View-once media gallery
+   (tabs)/alerts.tsx   — Alert feed
+   (tabs)/settings.tsx — Settings
+
+B) Auth flow:
+   auth/login.tsx, auth/register.tsx — JWT login, store token in SecureStore
+
+C) WhatsApp Connect flow (3-step):
+   connect-whatsapp/index.tsx:
+   Step 1: "Enter your WhatsApp phone number" → input + country picker
+   Step 2: "Enter this code in WhatsApp" → display large 8-digit pairing code with countdown timer, instruction text: "Open WhatsApp → Settings → Linked Devices → Link a Device → Link with phone number instead → Enter this code"
+   Step 3: "Connected!" → success animation, redirect to home
+
+   useWhatsAppConnection hook:
+   - Polls GET /api/whatsapp/connection-status every 3 seconds during pairing
+   - Subscribes to WebSocket for session_connected / pairing_code_generated events
+   - Manages connection state machine: idle → requesting → code_displayed → connecting → connected | failed
+
+D) Home Dashboard (home.tsx):
+   - Connection status card (green = connected, red = disconnected, with reconnect button)
+   - Search bar to filter contacts
+   - Contact cards showing: avatar, name, current status (online/offline dot), last seen, today's screen time sparkline
+   - Quick filters: All, Online Now, Favorites, Groups
+   - Family summary card: total online time across all contacts today
+
+E) Contact Detail (contact/[id].tsx):
+   - Profile header with status badge
+   - Timeline tab: chronological online/offline events with duration bars
+   - Heatmap tab: 24-hour × 7-day activity heatmap (colored grid)
+   - Stats tab: daily average, peak hours, total this week
+
+F) Chats screen (chats.tsx):
+   - List of all chat conversations, sorted by last message time
+   - Each row: contact avatar, name, last message preview, timestamp, unread indicator
+   - Tap → chat/[jid].tsx: full message thread, media thumbnails, view-once badge
+
+G) Media screen (media.tsx):
+   - Grid gallery of all captured view-once photos and videos
+   - Tap to view full-screen, with download button
+   - Filter by contact, date range
+
+H) Alerts screen (alerts.tsx):
+   - Feed of triggered alerts with contact name, trigger type, details, timestamp
+   - Mark as read / dismiss
+   - FAB to create new alert rule
+
+I) Settings screen (settings.tsx):
+   - WhatsApp connection management (status, disconnect, reconnect)
+   - Notification preferences (push notifications for status changes, alerts)
+   - Do Not Disturb schedule
+   - Subscription tier display
+   - Account management (change password, logout, delete account)
+
+--------------------------------------------------------------
+WEBSOCKET PROTOCOL
+--------------------------------------------------------------
+
+Server: native ws at /ws, authenticated via JWT token in query param or first message.
+
+Event types (server → client):
+  { type: 'pairing_code_generated', code: string, expiresAt: string }
+  { type: 'session_connected', phoneNumber: string }
+  { type: 'session_disconnected', reason: string }
+  { type: 'session_reconnecting', attempt: number, maxAttempts: number }
+  { type: 'status_change', contactId: number, contactName: string, status: 'online'|'offline', timestamp: string }
+  { type: 'new_message', chatJid: string, messageId: string, preview: string, isViewOnce: boolean }
+  { type: 'alert_triggered', alertId: number, type: string, contactName: string, details: string }
+
+Mobile client: custom useWebSocket hook in hooks/useWebSocket.ts that auto-reconnects with exponential backoff, dispatches events to appropriate TanStack Query cache invalidations and local notification triggers.
+
+--------------------------------------------------------------
+CRITICAL IMPLEMENTATION NOTES
+--------------------------------------------------------------
+
+1. PAIRING CODE TIMING: sock.requestPairingCode(phone) MUST be called synchronously after makeWASocket() — before any await. Put all async operations (DB writes, broadcasts) in the connection.update callback, NOT between socket creation and pairing code request.
+
+2. BAILEYS PATCH: Create scripts/patch-baileys.sh that patches node_modules/@whiskeysockets/baileys to set passive: false in the WebSocket options. Wire this into package.json postinstall. Without this, connections will be unstable.
+
+3. AUTH STATE ENCRYPTION: Use a SEPARATE encryption key (SESSION_ENCRYPTION_KEY env var) for session encryption, NOT JWT_SECRET. This way rotating JWT doesn't destroy all WhatsApp sessions.
+
+4. PRESENCE RE-SUBSCRIBE: WhatsApp presence subscriptions silently expire. Implement a setInterval every 10 minutes that re-subscribes to all tracked contacts' presence.
+
+5. VIEW-ONCE MEDIA: Must be downloaded IMMEDIATELY when the message arrives. The media URL/key expires quickly. Download in the messages.upsert handler synchronously before acknowledging the event.
+
+6. MARK OFFLINE ON CONNECT: Always set markOnlineOnConnect: false in makeWASocket config. The parent should NOT appear as "online" on WhatsApp due to the server connection — only their real phone should control their online status.
+
+7. MEDIA STORAGE: Store downloaded media files on disk at uploads/{userId}/{type}/{messageId}.{extension}. Serve via authenticated endpoint GET /api/chats/media/:messageId.
+
+8. STARTUP RECOVERY: On server start, call autoReconnectAllSessions() to restore all previously-connected WhatsApp sessions from DB. Stagger reconnections with 2-second delays to avoid rate limiting.
+
+9. GRACEFUL SHUTDOWN: On SIGTERM/SIGINT, iterate all active sockets and call sock.end() (NOT sock.logout() — end preserves the session, logout destroys it).
+
+10. SUBSCRIPTION TIERS: Enforce contact limits per tier — Free: 3 contacts, Pro: 25 contacts, Family: unlimited. Check on POST /api/contacts.
+
+Now implement ALL of the above. Start with the database schema (Drizzle), then the backend services, then the API routes, then the WebSocket server, then the mobile screens. Every file should be complete, production-ready TypeScript.
