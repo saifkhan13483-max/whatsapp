@@ -146,10 +146,11 @@ export function useWhatsAppConnection(isPolling = false) {
       });
       const data = await res.json();
       if (!res.ok) {
-        const err = new Error(
-          friendlyError(data.error, res.status)
-        ) as any;
+        // Handle both legacy {error} and new {code, message} response shapes
+        const rawMsg = data.message ?? data.error;
+        const err = new Error(friendlyError(rawMsg, res.status)) as any;
         err.httpStatus = res.status;
+        err.code = data.code;
         throw err;
       }
       return data as WhatsAppRequestPairingCodeResponse;

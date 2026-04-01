@@ -1,4 +1,5 @@
 import makeWASocket, {
+  Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
   type WASocket,
@@ -27,11 +28,12 @@ interface SocketEntry {
 }
 
 const activeSockets = new Map<number, SocketEntry>();
+const pairingInProgress = new Set<number>();
 
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const PAIRING_CODE_TTL_MS = 5 * 60 * 1000;
-const PAIRING_REQUEST_TIMEOUT_MS = 30_000;
+const PAIRING_REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RECONNECT_ATTEMPTS = 5;
 
 async function checkRateLimit(userId: number): Promise<boolean> {
@@ -169,6 +171,13 @@ export async function requestPairingCode(
   userId: number,
   phoneNumber: string
 ): Promise<{ pairingCode: string; expiresAt: string }> {
+  if (pairingInProgress.has(userId)) {
+    throw makeApiError(
+      "A pairing request is already in progress. Please wait for it to complete or try again in a moment.",
+      409
+    );
+  }
+
   if (!(await checkRateLimit(userId))) {
     throw makeApiError(
       "Too many attempts. Please wait 10 minutes and try again.",
@@ -186,170 +195,214 @@ export async function requestPairingCode(
     throw makeApiError("WhatsApp is already linked for this account.", 409);
   }
 
+  // Strip all non-digits (removes +, spaces, dashes, parentheses)
   const cleanPhone = phoneNumber.replace(/\D/g, "");
-  if (!cleanPhone || cleanPhone.length < 7) {
+  if (!cleanPhone || cleanPhone.length < 7 || cleanPhone.length > 15) {
     throw makeApiError(
       "Invalid phone number. Please include your country code (e.g. +923001234567).",
       400
     );
   }
 
-  await destroySocket(userId);
+  pairingInProgress.add(userId);
 
-  await upsertSession(userId, {
-    status: "pending_pairing",
-    pairingCode: null,
-    pairingCodeExpiresAt: null,
-    sessionData: null,
-    lastError: null,
-    reconnectAttempts: 0,
-    phoneNumber: cleanPhone,
-    maskedPhone: maskPhone(cleanPhone),
-  });
-
-  const { state, saveCreds } = await useDbAuthState(userId);
-  const { version } = await fetchLatestBaileysVersion();
-
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    printQRInTerminal: false,
-    logger: logger.child({ component: "baileys", userId }) as any,
-    browser: ["Windows", "Chrome", "114.0.5735.198"],
-    syncFullHistory: false,
-    generateHighQualityLinkPreview: false,
-    defaultQueryTimeoutMs: undefined,
-    qrTimeout: 10 * 60 * 1000,
-  });
-
-  const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS);
-  const entry: SocketEntry = {
-    socket: sock,
-    pairingCodeExpiresAt: expiresAt,
-    connectionAccepted: false,
-  };
-  activeSockets.set(userId, entry);
-
-  sock.ev.on("creds.update", saveCreds);
-
-  sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
-    if (connection === "open") {
-      entry.connectionAccepted = true;
-      const now = new Date();
-      await upsertSession(userId, {
-        status: "connected",
-        connectedAt: now,
-        lastActiveAt: now,
-        lastError: null,
-        pairingCode: null,
-        pairingCodeExpiresAt: null,
-      });
-      await saveCreds();
-      broadcast(userId, {
-        type: "session_connected",
-        userId,
-        timestamp: now.toISOString(),
-      });
-      logger.info({ userId }, "WhatsApp session connected via pairing code");
-    }
-
-    if (connection === "close") {
-      const boomStatus = (lastDisconnect?.error as Boom)?.output?.statusCode;
-      const loggedOut = boomStatus === DisconnectReason.loggedOut;
-      const restartRequired = boomStatus === DisconnectReason.restartRequired;
-
-      sock.ev.removeAllListeners("connection.update");
-
-      if (loggedOut) {
-        activeSockets.delete(userId);
-        await upsertSession(userId, {
-          status: "disconnected",
-          sessionData: null,
-          lastError: "Logged out from WhatsApp",
-        });
-        broadcast(userId, {
-          type: "session_disconnected",
-          userId,
-          reason: "logged_out",
-          timestamp: new Date().toISOString(),
-        });
-        return;
-      }
-
-      if (restartRequired && entry.connectionAccepted) {
-        activeSockets.delete(userId);
-        scheduleReconnect(userId, 1000);
-        return;
-      }
-
-      if (!entry.connectionAccepted) {
-        activeSockets.delete(userId);
-        await upsertSession(userId, {
-          status: "error",
-          lastError:
-            "WhatsApp rejected the code. Make sure you're entering it in the WhatsApp account for the phone number you typed. Request a new code if needed.",
-        });
-        broadcast(userId, {
-          type: "session_disconnected",
-          userId,
-          reason: "pairing_failed",
-          timestamp: new Date().toISOString(),
-        });
-      }
-    }
-  });
-
-  let code: string;
   try {
-    // IMPORTANT: requestPairingCode must be called immediately after makeWASocket,
-    // WITHOUT awaiting waitForSocketOpen() first. Calling waitForSocketOpen() first
-    // lets Baileys commit to QR-code registration mode, then requestPairingCode
-    // conflicts with the already-started handshake — WhatsApp rejects the pairing.
-    // Baileys queues the pairing code request internally before the handshake begins
-    // when called this way, ensuring the connection runs in pairing-code mode.
-    const codePromise = sock.requestPairingCode(cleanPhone);
-
-    const timeoutPromise = new Promise<never>((_, rej) =>
-      setTimeout(
-        () =>
-          rej(
-            makeApiError(
-              "Could not reach WhatsApp servers. Check your internet connection and try again.",
-              408
-            )
-          ),
-        PAIRING_REQUEST_TIMEOUT_MS
-      )
-    );
-
-    code = await Promise.race([codePromise, timeoutPromise]);
-  } catch (err: any) {
     await destroySocket(userId);
-    await persistError(userId, err?.message ?? "Pairing code request failed");
-    throw err;
+
+    await upsertSession(userId, {
+      status: "pending_pairing",
+      pairingCode: null,
+      pairingCodeExpiresAt: null,
+      sessionData: null,
+      lastError: null,
+      reconnectAttempts: 0,
+      phoneNumber: cleanPhone,
+      maskedPhone: maskPhone(cleanPhone),
+    });
+
+    const { state, saveCreds } = await useDbAuthState(userId);
+
+    let version: [number, number, number];
+    try {
+      const result = await fetchLatestBaileysVersion();
+      version = result.version;
+      logger.debug({ userId, version, isLatest: result.isLatest }, "Baileys version fetched");
+    } catch (err) {
+      version = [2, 3000, 1015901307];
+      logger.warn({ err, userId }, "fetchLatestBaileysVersion failed — using hardcoded fallback");
+    }
+
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      printQRInTerminal: false,
+      logger: logger.child({ component: "baileys", userId }) as any,
+      // Use Baileys' standard browser constant — format is [OS, Browser, OS_version].
+      // Using a raw version string like "114.0.5735.198" (a Chrome version) in the
+      // OS position causes WhatsApp to reject the Noise handshake immediately.
+      browser: Browsers.ubuntu("Chrome"),
+      syncFullHistory: false,
+      generateHighQualityLinkPreview: false,
+      markOnlineOnConnect: false,
+      defaultQueryTimeoutMs: undefined,
+    });
+
+    const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS);
+    const entry: SocketEntry = {
+      socket: sock,
+      pairingCodeExpiresAt: expiresAt,
+      connectionAccepted: false,
+    };
+    activeSockets.set(userId, entry);
+
+    sock.ev.on("creds.update", saveCreds);
+
+    sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+      const boomErr = lastDisconnect?.error as Boom | undefined;
+      const boomStatus = boomErr?.output?.statusCode;
+      const boomMessage = boomErr?.message ?? (lastDisconnect?.error as any)?.message;
+
+      if (connection === "open") {
+        entry.connectionAccepted = true;
+        const now = new Date();
+        await upsertSession(userId, {
+          status: "connected",
+          connectedAt: now,
+          lastActiveAt: now,
+          lastError: null,
+          pairingCode: null,
+          pairingCodeExpiresAt: null,
+        });
+        await saveCreds();
+        broadcast(userId, {
+          type: "session_connected",
+          userId,
+          timestamp: now.toISOString(),
+        });
+        logger.info({ userId }, "WhatsApp session connected via pairing code");
+      }
+
+      if (connection === "close") {
+        const loggedOut = boomStatus === DisconnectReason.loggedOut;
+        const restartRequired = boomStatus === DisconnectReason.restartRequired;
+
+        logger.warn(
+          {
+            userId,
+            boomStatus,
+            boomMessage,
+            connectionAccepted: entry.connectionAccepted,
+            hadPairingCode: !!entry.pairingCode,
+          },
+          "WhatsApp connection closed"
+        );
+
+        sock.ev.removeAllListeners("connection.update");
+
+        if (loggedOut) {
+          activeSockets.delete(userId);
+          await upsertSession(userId, {
+            status: "disconnected",
+            sessionData: null,
+            lastError: "Logged out from WhatsApp",
+          });
+          broadcast(userId, {
+            type: "session_disconnected",
+            userId,
+            reason: "logged_out",
+            timestamp: new Date().toISOString(),
+          });
+          return;
+        }
+
+        if (restartRequired && entry.connectionAccepted) {
+          activeSockets.delete(userId);
+          scheduleReconnect(userId, 1000);
+          return;
+        }
+
+        if (!entry.connectionAccepted) {
+          activeSockets.delete(userId);
+
+          // If we never got a pairing code, this is a connection-level failure
+          // (network issue, server rejection, invalid handshake) — not a wrong code.
+          // If we did get a code and connection closed after, the user entered a wrong code.
+          const isConnectionFailure = !entry.pairingCode;
+          const errorMsg = isConnectionFailure
+            ? `Failed to connect to WhatsApp servers. ${boomMessage ? `Reason: ${boomMessage}.` : ""} Please try again.`
+            : "WhatsApp rejected the pairing code. Make sure you entered it in the correct WhatsApp account and try again.";
+
+          await upsertSession(userId, {
+            status: "error",
+            lastError: errorMsg,
+          });
+          broadcast(userId, {
+            type: "session_disconnected",
+            userId,
+            reason: isConnectionFailure ? "connection_failed" : "pairing_rejected",
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+    });
+
+    let code: string;
+    try {
+      // IMPORTANT: requestPairingCode must be called immediately after makeWASocket,
+      // WITHOUT awaiting waitForSocketOpen() first. Calling waitForSocketOpen() first
+      // lets Baileys commit to QR-code registration mode, then requestPairingCode
+      // conflicts with the already-started handshake — WhatsApp rejects the pairing.
+      // Baileys queues the pairing code request internally before the handshake begins
+      // when called this way, ensuring the connection runs in pairing-code mode.
+      const codePromise = sock.requestPairingCode(cleanPhone);
+
+      const timeoutPromise = new Promise<never>((_, rej) =>
+        setTimeout(
+          () => rej(makeApiError(
+            "Request timed out — WhatsApp servers did not respond. Check your internet and try again.",
+            408
+          )),
+          PAIRING_REQUEST_TIMEOUT_MS
+        )
+      );
+
+      code = await Promise.race([codePromise, timeoutPromise]);
+
+      if (!code) {
+        throw makeApiError(
+          "WhatsApp returned an empty pairing code. Please try again.",
+          502
+        );
+      }
+
+      logger.info({ userId, maskedPhone: maskPhone(cleanPhone) }, "Pairing code generated successfully");
+    } catch (err: any) {
+      await destroySocket(userId);
+      const msg = err?.message ?? "Pairing code request failed";
+      await persistError(userId, msg);
+      logger.error({ err, userId, cleanPhone: maskPhone(cleanPhone) }, "PAIRING ERROR: requestPairingCode failed");
+      throw err;
+    }
+
+    entry.pairingCode = code;
+
+    await upsertSession(userId, {
+      pairingCode: code,
+      pairingCodeExpiresAt: expiresAt,
+    });
+
+    broadcast(userId, {
+      type: "pairing_code_generated",
+      userId,
+      pairingCode: code,
+      expiresAt: expiresAt.toISOString(),
+      timestamp: new Date().toISOString(),
+    });
+
+    return { pairingCode: code, expiresAt: expiresAt.toISOString() };
+  } finally {
+    pairingInProgress.delete(userId);
   }
-
-  entry.pairingCode = code;
-
-  await upsertSession(userId, {
-    pairingCode: code,
-    pairingCodeExpiresAt: expiresAt,
-  });
-
-  broadcast(userId, {
-    type: "pairing_code_generated",
-    userId,
-    pairingCode: code,
-    expiresAt: expiresAt.toISOString(),
-    timestamp: new Date().toISOString(),
-  });
-
-  logger.info(
-    { userId, maskedPhone: maskPhone(cleanPhone) },
-    "Pairing code generated successfully"
-  );
-
-  return { pairingCode: code, expiresAt: expiresAt.toISOString() };
 }
 
 export async function getConnectionStatus(userId: number): Promise<{
@@ -470,16 +523,25 @@ export async function reconnect(
 
   try {
     const { state, saveCreds } = await useDbAuthState(userId);
-    const { version } = await fetchLatestBaileysVersion();
+
+    let version: [number, number, number];
+    try {
+      const result = await fetchLatestBaileysVersion();
+      version = result.version;
+    } catch {
+      version = [2, 3000, 1015901307];
+      logger.warn({ userId }, "fetchLatestBaileysVersion failed in reconnect — using fallback");
+    }
 
     const sock = makeWASocket({
       version,
       auth: state,
       printQRInTerminal: false,
       logger: logger.child({ component: "baileys-reconnect", userId }) as any,
-      browser: ["Windows", "Chrome", "114.0.5735.198"],
+      browser: Browsers.ubuntu("Chrome"),
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
+      markOnlineOnConnect: false,
       defaultQueryTimeoutMs: undefined,
     });
 
@@ -518,8 +580,13 @@ export async function reconnect(
 
         if (connection === "close") {
           clearTimeout(timeout);
-          const boomStatus = (lastDisconnect?.error as Boom)?.output?.statusCode;
+          const boomErr = lastDisconnect?.error as Boom | undefined;
+          const boomStatus = boomErr?.output?.statusCode;
+          const boomMessage = boomErr?.message ?? (lastDisconnect?.error as any)?.message;
           const loggedOut = boomStatus === DisconnectReason.loggedOut;
+
+          logger.warn({ userId, boomStatus, boomMessage }, "WhatsApp reconnect connection closed");
+
           sock.ev.removeAllListeners("connection.update");
           activeSockets.delete(userId);
 
@@ -536,7 +603,8 @@ export async function reconnect(
               timestamp: new Date().toISOString(),
             });
           } else {
-            await persistError(userId, "Reconnect failed — connection closed unexpectedly");
+            const msg = `Reconnect failed — connection closed. ${boomMessage ? `Reason: ${boomMessage}.` : ""}`;
+            await persistError(userId, msg);
           }
           resolve({ status: "failed" });
         }
