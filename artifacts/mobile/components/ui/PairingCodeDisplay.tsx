@@ -25,6 +25,7 @@ interface PairingCodeDisplayProps {
   expiresAt: string;
   onRequestNew: () => void;
   isLoadingNew?: boolean;
+  dimmed?: boolean;
 }
 
 function formatCountdown(ms: number): string {
@@ -40,6 +41,7 @@ export function PairingCodeDisplay({
   expiresAt,
   onRequestNew,
   isLoadingNew,
+  dimmed = false,
 }: PairingCodeDisplayProps) {
   const colors = useColors();
   const [remainingMs, setRemainingMs] = useState(() => new Date(expiresAt).getTime() - Date.now());
@@ -100,21 +102,24 @@ export function PairingCodeDisplay({
   const group1 = code.slice(0, 4).split("");
   const group2 = code.slice(4, 8).split("");
 
+  const cellBorderColor = dimmed ? colors.border : colors.primary;
+  const cellTextColor = dimmed ? colors.muted : colors.primary;
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, dimmed && { opacity: 0.4 }]}>
       <View style={styles.codeRow}>
         {group1.map((char, i) => (
           <View
             key={`g1-${i}`}
             style={[
               styles.charCell,
-              { backgroundColor: colors.surface, borderColor: colors.primary },
+              { backgroundColor: colors.surface, borderColor: cellBorderColor },
             ]}
           >
             <Text
               style={[
                 styles.charText,
-                { color: colors.primary },
+                { color: cellTextColor },
               ]}
             >
               {char}
@@ -129,10 +134,10 @@ export function PairingCodeDisplay({
             key={`g2-${i}`}
             style={[
               styles.charCell,
-              { backgroundColor: colors.surface, borderColor: colors.primary },
+              { backgroundColor: colors.surface, borderColor: cellBorderColor },
             ]}
           >
-            <Text style={[styles.charText, { color: colors.primary }]}>{char}</Text>
+            <Text style={[styles.charText, { color: cellTextColor }]}>{char}</Text>
           </View>
         ))}
       </View>

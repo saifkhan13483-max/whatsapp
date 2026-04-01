@@ -74,7 +74,13 @@ function useCodeCountdown(expiresAt: string | undefined): number {
   return secondsLeft;
 }
 
-function friendlyError(msg: string | undefined, httpStatus?: number): string {
+function friendlyError(msg: string | undefined, httpStatus?: number, code?: string): string {
+  if (code === "RATE_LIMITED") return "Too many attempts. Please wait 10 minutes and try again.";
+  if (code === "PAIRING_IN_PROGRESS") return "A pairing request is already in progress. Please wait a moment.";
+  if (code === "CONNECTION_CLOSED") return "WhatsApp closed the connection. Make sure this number has an active WhatsApp account and try again.";
+  if (code === "LOGGED_OUT") return "Session logged out. Please link your account again.";
+  if (code === "TIMEOUT") return "WhatsApp servers didn't respond in time. Check your internet and try again.";
+
   if (!msg) {
     return httpStatus === 429
       ? "Too many attempts. Please wait 10 minutes and try again."
@@ -97,8 +103,8 @@ function friendlyError(msg: string | undefined, httpStatus?: number): string {
   if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("408")) {
     return "Could not reach WhatsApp servers. Check your internet connection.";
   }
-  if (lower.includes("connection failed") || lower.includes("pairing failed")) {
-    return "Connection failed. Make sure the code was entered correctly and try again.";
+  if (lower.includes("connection failed") || lower.includes("pairing failed") || lower.includes("connection closed")) {
+    return "WhatsApp closed the connection. Make sure this number has an active WhatsApp account and try again.";
   }
   return msg;
 }
@@ -146,9 +152,8 @@ export function useWhatsAppConnection(isPolling = false) {
       });
       const data = await res.json();
       if (!res.ok) {
-        // Handle both legacy {error} and new {code, message} response shapes
         const rawMsg = data.message ?? data.error;
-        const err = new Error(friendlyError(rawMsg, res.status)) as any;
+        const err = new Error(friendlyError(rawMsg, res.status, data.code)) as any;
         err.httpStatus = res.status;
         err.code = data.code;
         throw err;

@@ -1,0 +1,130 @@
+Fix the WhatsApp pairing code generation failure in the backend using Baileys.
+
+The current issue:
+- API returns "Failed to get pairing code"
+- sock.requestPairingCode(phone) is failing or not returning
+
+Tasks:
+
+1. Fix Pairing Code Timing (CRITICAL)
+- Ensure requestPairingCode is called immediately after socket creation
+- No await or async operation before it
+
+Correct pattern:
+
+const sock = makeWASocket({
+  auth: state,
+  printQRInTerminal: false,
+})
+
+const code = await sock.requestPairingCode(formattedPhone)
+
+---
+
+2. Normalize Phone Number
+
+Create utility:
+
+function formatPhoneNumber(phone: string) {
+  return phone.replace(/\D/g, '') // remove +, spaces, etc
+}
+
+Ensure:
+- Input: +92 3180558580
+- Output: 923180558580
+
+---
+
+3. Add Debug Logging
+
+Wrap pairing in try/catch:
+
+try {
+  const code = await sock.requestPairingCode(phone)
+  console.log('Pairing code generated:', code)
+  return code
+} catch (err) {
+  console.error('PAIRING ERROR:', err)
+  throw new Error('PAIRING_FAILED')
+}
+
+---
+
+4. Validate Socket Creation
+
+Ensure socket is created with:
+
+const sock = makeWASocket({
+  auth: state,
+  browser: ['Chrome', 'Desktop', '1.0'],
+  markOnlineOnConnect: false,
+})
+
+---
+
+5. Handle Connection Events
+
+sock.ev.on('connection.update', (update) => {
+  console.log('WA connection update:', update)
+})
+
+---
+
+6. Prevent Multiple Requests
+
+- Block duplicate pairing requests while one is active
+- Use Redis or in-memory lock:
+
+if (activePairing.has(userId)) {
+  throw new Error('PAIRING_ALREADY_IN_PROGRESS')
+}
+
+---
+
+7. Improve API Response
+
+Instead of generic error:
+
+return res.status(500).json({
+  code: 'PAIRING_FAILED',
+  message: 'Unable to generate pairing code. Please try again.'
+})
+
+---
+
+8. Frontend Fix
+
+- Show exact error message from backend
+- Disable button while loading
+- Retry only after failure
+
+---
+
+9. Add Timeout Protection
+
+If pairing takes too long:
+
+const timeout = new Promise((_, reject) =>
+  setTimeout(() => reject(new Error('TIMEOUT')), 10000)
+)
+
+const code = await Promise.race([
+  sock.requestPairingCode(phone),
+  timeout
+])
+
+---
+
+10. Ensure Clean Socket Lifecycle
+
+- Close socket on failure
+- Remove from memory map
+
+---
+
+Expected Result:
+
+- Pairing code always generates successfully
+- Errors are logged clearly
+- Invalid phone numbers are rejected early
+- No silent failures

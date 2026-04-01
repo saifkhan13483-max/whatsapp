@@ -245,6 +245,9 @@ export async function requestPairingCode(
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: false,
       defaultQueryTimeoutMs: undefined,
+      // Prevents Baileys from throwing when it tries to fetch message history
+      // during session init — we don't store a message cache server-side.
+      getMessage: async (_key) => undefined,
     });
 
     const expiresAt = new Date(Date.now() + PAIRING_CODE_TTL_MS);
@@ -257,7 +260,9 @@ export async function requestPairingCode(
 
     sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect } = update;
+      logger.info({ userId, connection, qr: !!update.qr, receivedPendingNotifications: update.receivedPendingNotifications }, "WA connection.update");
       const boomErr = lastDisconnect?.error as Boom | undefined;
       const boomStatus = boomErr?.output?.statusCode;
       const boomMessage = boomErr?.message ?? (lastDisconnect?.error as any)?.message;
@@ -543,6 +548,7 @@ export async function reconnect(
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: false,
       defaultQueryTimeoutMs: undefined,
+      getMessage: async (_key) => undefined,
     });
 
     const entry: SocketEntry = { socket: sock, connectionAccepted: false };
