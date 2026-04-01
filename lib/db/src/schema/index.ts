@@ -262,3 +262,54 @@ export const activityLogsTable = pgTable("activity_logs", {
 
 export type ActivityLog = typeof activityLogsTable.$inferSelect;
 export type InsertActivityLog = typeof activityLogsTable.$inferInsert;
+
+export const chatMessagesTable = pgTable("chat_messages", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  chatJid: varchar("chat_jid", { length: 50 }).notNull(),
+  messageId: varchar("message_id", { length: 100 }).notNull().unique(),
+  fromMe: boolean("from_me").notNull().default(false),
+  senderJid: varchar("sender_jid", { length: 50 }),
+  senderName: varchar("sender_name", { length: 100 }),
+  messageType: varchar("message_type", { length: 20 }).notNull().default("text"),
+  textContent: text("text_content"),
+  mediaPath: text("media_path"),
+  mediaMimeType: varchar("media_mime_type", { length: 50 }),
+  mediaSize: integer("media_size"),
+  isViewOnce: boolean("is_view_once").notNull().default(false),
+  isForwarded: boolean("is_forwarded").notNull().default(false),
+  quotedMessageId: varchar("quoted_message_id", { length: 100 }),
+  timestamp: timestamp("timestamp").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type ChatMessage = typeof chatMessagesTable.$inferSelect;
+export type InsertChatMessage = typeof chatMessagesTable.$inferInsert;
+
+export const alertRulesTable = pgTable("alert_rules", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  type: varchar("type", { length: 30 }).notNull(),
+  contactId: integer("contact_id").references(() => contactsTable.id, { onDelete: "cascade" }),
+  keyword: varchar("keyword", { length: 200 }),
+  thresholdMinutes: integer("threshold_minutes"),
+  startHour: integer("start_hour"),
+  endHour: integer("end_hour"),
+  isEnabled: boolean("is_enabled").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type AlertRule = typeof alertRulesTable.$inferSelect;
+export type InsertAlertRule = typeof alertRulesTable.$inferInsert;
+
+export const alertEventsTable = pgTable("alert_events", {
+  id: serial("id").primaryKey(),
+  alertId: integer("alert_id").notNull().references(() => alertRulesTable.id, { onDelete: "cascade" }),
+  contactId: integer("contact_id").references(() => contactsTable.id, { onDelete: "cascade" }),
+  triggeredAt: timestamp("triggered_at").defaultNow().notNull(),
+  details: jsonb("details").$type<Record<string, unknown>>(),
+  isRead: boolean("is_read").notNull().default(false),
+});
+
+export type AlertEvent = typeof alertEventsTable.$inferSelect;
+export type InsertAlertEvent = typeof alertEventsTable.$inferInsert;

@@ -1,5 +1,4 @@
 import makeWASocket, {
-  Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
   type WASocket,
@@ -11,6 +10,8 @@ import { eq } from "drizzle-orm";
 import { logger } from "./logger.js";
 import { useDbAuthState } from "./dbAuthState.js";
 import { broadcast } from "../services/websocket/wsServer.js";
+import { attachPresenceTracker, stopPresenceTracker } from "../services/presenceTracker.js";
+import { attachMessageHandler } from "../services/messageHandler.js";
 
 export type ConnectionStatus =
   | "not_connected"
@@ -85,6 +86,7 @@ function makeApiError(message: string, statusCode: number): Error {
 async function destroySocket(userId: number): Promise<void> {
   const entry = activeSockets.get(userId);
   if (entry) {
+    stopPresenceTracker(userId);
     try { entry.socket.end(undefined); } catch {}
     activeSockets.delete(userId);
   }
@@ -237,16 +239,11 @@ export async function requestPairingCode(
       auth: state,
       printQRInTerminal: false,
       logger: logger.child({ component: "baileys", userId }) as any,
-      // Use Baileys' standard browser constant — format is [OS, Browser, OS_version].
-      // Using a raw version string like "114.0.5735.198" (a Chrome version) in the
-      // OS position causes WhatsApp to reject the Noise handshake immediately.
-      browser: Browsers.ubuntu("Chrome"),
+      browser: ["WaTracker Pro", "Chrome", "127.0.0"] as [string, string, string],
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: false,
       defaultQueryTimeoutMs: undefined,
-      // Prevents Baileys from throwing when it tries to fetch message history
-      // during session init — we don't store a message cache server-side.
       getMessage: async (_key) => undefined,
     });
 
@@ -259,6 +256,8 @@ export async function requestPairingCode(
     activeSockets.set(userId, entry);
 
     sock.ev.on("creds.update", saveCreds);
+    attachPresenceTracker(userId, sock);
+    attachMessageHandler(userId, sock);
 
     sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect } = update;
@@ -543,7 +542,7 @@ export async function reconnect(
       auth: state,
       printQRInTerminal: false,
       logger: logger.child({ component: "baileys-reconnect", userId }) as any,
-      browser: Browsers.ubuntu("Chrome"),
+      browser: ["WaTracker Pro", "Chrome", "127.0.0"] as [string, string, string],
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: false,
@@ -555,6 +554,8 @@ export async function reconnect(
     activeSockets.set(userId, entry);
 
     sock.ev.on("creds.update", saveCreds);
+    attachPresenceTracker(userId, sock);
+    attachMessageHandler(userId, sock);
 
     return await new Promise<{ status: "connected" | "failed" }>((resolve) => {
       const timeout = setTimeout(() => {
@@ -657,6 +658,21 @@ export async function getHealthStatus(userId: number): Promise<{
     reconnectAttempts: row.reconnectAttempts ?? 0,
     lastError: row.lastError ?? undefined,
   };
+}
+
+export function getActiveSocket(userId: number): WASocket | undefined {
+  return activeSockets.get(userId)?.socket;
+}
+
+export async function gracefulShutdown(): Promise<void> {
+  logger.info({ count: activeSockets.size }, "Graceful shutdown: ending all WhatsApp sockets");
+  for (const [userId, entry] of activeSockets) {
+    stopPresenceTracker(userId);
+    try {
+      entry.socket.end(undefined);
+    } catch {}
+  }
+  activeSockets.clear();
 }
 
 export async function autoReconnectAllSessions(): Promise<void> {

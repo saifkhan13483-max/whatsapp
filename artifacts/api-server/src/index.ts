@@ -3,7 +3,7 @@ import app from "./app.js";
 import { logger } from "./lib/logger.js";
 import { initWsServer } from "./services/websocket/wsServer.js";
 import { initializeFromDB } from "./services/tracker/trackingEngine.js";
-import { autoReconnectAllSessions } from "./lib/whatsappSessionManager.js";
+import { autoReconnectAllSessions, gracefulShutdown } from "./lib/whatsappSessionManager.js";
 
 const rawPort = process.env["PORT"];
 
@@ -39,3 +39,16 @@ httpServer.on("error", (err) => {
   logger.error({ err }, "HTTP server error");
   process.exit(1);
 });
+
+async function shutdown(signal: string): Promise<void> {
+  logger.info({ signal }, "Shutdown signal received");
+  await gracefulShutdown();
+  httpServer.close(() => {
+    logger.info("HTTP server closed");
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 10_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
