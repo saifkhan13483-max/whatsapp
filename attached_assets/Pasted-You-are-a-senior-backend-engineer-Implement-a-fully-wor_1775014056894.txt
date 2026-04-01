@@ -1,0 +1,209 @@
+You are a senior backend engineer. Implement a fully working, production-grade WhatsApp linking system using Baileys in an existing pnpm monorepo with Express, PostgreSQL (Drizzle), WebSocket, and Expo mobile client.
+
+Goal:
+Build a reliable “Link WhatsApp Account” flow using pairing code (NOT QR), with secure session persistence, auto-reconnect, and real-time status updates.
+
+---
+
+## 1. WhatsApp Session Manager
+
+Create a dedicated module:
+artifacts/api-server/src/services/whatsappSessionManager.ts
+
+Responsibilities:
+- Create and manage Baileys sockets per user
+- Generate pairing codes
+- Persist auth state securely
+- Restore sessions on server restart
+- Handle reconnect logic
+
+Implementation requirements:
+
+- Use makeWASocket from @whiskeysockets/baileys
+- Call requestPairingCode(phone) IMMEDIATELY after socket creation (no await before)
+- Store active sockets in a Map<userId, WASocket>
+- Listen to:
+  - connection.update
+  - creds.update
+
+---
+
+## 2. Pairing Code Flow (CRITICAL)
+
+Implement function:
+
+createPairingSession(userId: string, phone: string)
+
+Steps:
+1. Create socket
+2. Immediately call:
+   const code = await sock.requestPairingCode(phone)
+3. Return pairing code to API
+4. Store temporary socket in memory or Redis
+
+DO NOT:
+- Call waitForSocketOpen before pairing
+- Delay pairing code generation
+
+---
+
+## 3. Auth State Persistence (MUST BE SECURE)
+
+Create module:
+services/dbAuthState.ts
+
+Requirements:
+- Serialize creds + keys using BufferJSON
+- Encrypt using AES-256-GCM (NOT CBC)
+- Use a dedicated encryption key (NOT JWT_SECRET)
+- Store in PostgreSQL table: whatsapp_sessions
+
+Schema fields:
+- userId
+- sessionData (encrypted JSON)
+- iv
+- authTag
+- status
+- phoneNumber
+
+On:
+- creds.update → persist immediately
+
+---
+
+## 4. Session Restore on Startup
+
+On server boot:
+
+- Load all sessions from DB
+- Decrypt auth state
+- Recreate sockets:
+  makeWASocket({ auth: state })
+
+- Auto-connect all valid sessions
+- Retry failed sessions with exponential backoff
+
+---
+
+## 5. Connection Lifecycle Handling
+
+Handle connection.update:
+
+- "open":
+  - mark session as connected
+  - notify client via WebSocket
+
+- "close":
+  - detect reason (logged out, connection lost)
+  - retry up to 5 times (exponential backoff)
+  - if permanently closed → mark session invalid
+
+---
+
+## 6. API Endpoints
+
+Implement:
+
+POST /api/whatsapp/link
+- input: phone
+- output: pairing code
+
+GET /api/whatsapp/status
+- returns connection status
+
+POST /api/whatsapp/disconnect
+- closes session + deletes from DB
+
+POST /api/whatsapp/reconnect
+- manually trigger reconnect
+
+All routes must use JWT auth middleware.
+
+---
+
+## 7. WebSocket Integration
+
+On connection:
+- authenticate using JWT
+
+Broadcast events:
+- pairing_code_generated
+- session_connected
+- session_disconnected
+
+Ensure:
+- user-specific channels
+- reconnect-safe delivery
+
+---
+
+## 8. Rate Limiting (IMPORTANT)
+
+Implement pairing rate limit:
+- max 3 requests per 10 minutes per user
+
+Use Redis (NOT in-memory Map)
+
+---
+
+## 9. Error Handling
+
+Handle:
+- invalid phone number
+- pairing code expired
+- WhatsApp rejection
+- network failures
+
+Return structured errors:
+{ code, message }
+
+---
+
+## 10. Mobile App Integration (Expo)
+
+Update connect-whatsapp screen:
+
+Flow:
+1. Enter phone number
+2. Call /link API
+3. Display pairing code
+4. Show instructions:
+   "Open WhatsApp → Linked Devices → Link with phone number → Enter code"
+
+Poll or subscribe to WebSocket for status updates
+
+---
+
+## 11. Security Best Practices
+
+- Use AES-256-GCM encryption
+- Separate encryption key from JWT_SECRET
+- Validate all inputs with Zod
+- Never expose session data to client
+- Use httpOnly cookies for auth
+
+---
+
+## 12. Production Readiness
+
+- Add logging (Pino)
+- Add health check for WhatsApp connections
+- Prevent memory leaks (cleanup sockets on disconnect)
+- Ensure idempotent reconnect logic
+
+---
+
+## Output Requirements
+
+- Complete implementation of whatsappSessionManager.ts
+- dbAuthState.ts with encryption
+- API routes
+- WebSocket integration
+- Mobile integration example
+- Clear folder structure
+
+System must:
+- survive server restarts
+- reconnect automatically
+- generate valid pairing codes every time
+- never require user to re-link unless session is revoked
