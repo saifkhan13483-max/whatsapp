@@ -262,8 +262,8 @@ export default function SettingsScreen() {
       <View style={{ marginBottom: 4 }}>
         <ConnectionStatusCard
           status={connectionStatus?.status ?? "not_connected"}
-          phoneNumber={connectionStatus?.phoneNumber}
-          connectedAt={connectionStatus?.connectedAt}
+          phoneNumber={connectionStatus?.phoneNumber ?? undefined}
+          connectedAt={connectionStatus?.connectedAt ?? undefined}
           onConnect={() => router.push("/connect-whatsapp")}
           onContinueSetup={() => router.push("/connect-whatsapp")}
           onDisconnect={() => {

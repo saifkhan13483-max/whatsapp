@@ -134,10 +134,13 @@ export function useWhatsAppConnection(isPolling = false) {
     refetchInterval: pollingActive ? 3_000 : false,
   });
 
-  const codeSecondsLeft = useCodeCountdown(
-    connectionStatus?.pairingCodeExpiresAt ??
-      pairingCodeStatus?.expiresAt
-  );
+  const pairingExpiry: string | undefined =
+    (connectionStatus?.pairingCodeExpiresAt != null
+      ? connectionStatus.pairingCodeExpiresAt
+      : pairingCodeStatus?.expiresAt != null
+        ? pairingCodeStatus.expiresAt
+        : undefined);
+  const codeSecondsLeft = useCodeCountdown(pairingExpiry);
 
   const isCodeExpired =
     connectionStatus?.status === "pending_pairing" && codeSecondsLeft === 0;

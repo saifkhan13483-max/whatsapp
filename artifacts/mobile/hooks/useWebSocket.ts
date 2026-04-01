@@ -28,7 +28,8 @@ const MAX_BACKOFF_MS = 32_000;
 const INITIAL_BACKOFF_MS = 1_000;
 
 export function useWebSocket({ onEvent, enabled = true }: UseWebSocketOptions = {}) {
-  const { userId } = useAuth();
+  const { user } = useAuth();
+  const userId = user?.id;
   const queryClient = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
   const backoffRef = useRef(INITIAL_BACKOFF_MS);
