@@ -280,12 +280,15 @@ export async function requestPairingCode(
 
   let code: string;
   try {
-    const codeRace = (async () => {
-      await sock.waitForSocketOpen();
-      return sock.requestPairingCode(cleanPhone);
-    })();
+    // IMPORTANT: requestPairingCode must be called immediately after makeWASocket,
+    // WITHOUT awaiting waitForSocketOpen() first. Calling waitForSocketOpen() first
+    // lets Baileys commit to QR-code registration mode, then requestPairingCode
+    // conflicts with the already-started handshake — WhatsApp rejects the pairing.
+    // Baileys queues the pairing code request internally before the handshake begins
+    // when called this way, ensuring the connection runs in pairing-code mode.
+    const codePromise = sock.requestPairingCode(cleanPhone);
 
-    const timeoutRace = new Promise<never>((_, rej) =>
+    const timeoutPromise = new Promise<never>((_, rej) =>
       setTimeout(
         () =>
           rej(
@@ -298,7 +301,7 @@ export async function requestPairingCode(
       )
     );
 
-    code = await Promise.race([codeRace, timeoutRace]);
+    code = await Promise.race([codePromise, timeoutPromise]);
   } catch (err: any) {
     await destroySocket(userId);
     await persistError(userId, err?.message ?? "Pairing code request failed");
