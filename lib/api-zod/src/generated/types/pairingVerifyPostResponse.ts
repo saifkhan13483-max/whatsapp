@@ -6,6 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
+export interface PairingVerifyPostResponse {
+  success: boolean;
+  linked: boolean;
   status: string;
+  phoneNumber?: string | null;
+  connectedAt?: Date | null;
+  lastError?: string | null;
 }

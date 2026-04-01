@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getApiUrl } from "@/lib/query-client";
+import { getApiUrl } from "@/lib/queryClient";
 import { API } from "@/constants/api";
+import type {
+  WhatsAppConnectionStatus as ConnectionStatusData,
+  WhatsAppPairingCodeStatus as PairingCodeStatusData,
+  WhatsAppRequestPairingCodeResponse,
+} from "@workspace/api-client-react";
 
 export type ConnectionStatus =
   | "not_connected"
@@ -13,22 +18,7 @@ export type ConnectionStatus =
 
 export type PairingStatus = "waiting" | "accepted" | "expired" | "error";
 
-export interface ConnectionStatusData {
-  status: ConnectionStatus;
-  phoneNumber?: string;
-  connectedAt?: string;
-  pairingCode?: string;
-  pairingCodeExpiresAt?: string;
-  lastError?: string;
-  reconnectAttempts?: number;
-}
-
-export interface PairingCodeStatusData {
-  accepted: boolean;
-  status: PairingStatus;
-  pairingCode?: string;
-  expiresAt?: string;
-}
+export type { ConnectionStatusData, PairingCodeStatusData };
 
 async function fetchConnectionStatus(): Promise<ConnectionStatusData> {
   try {
@@ -162,7 +152,7 @@ export function useWhatsAppConnection(isPolling = false) {
         err.httpStatus = res.status;
         throw err;
       }
-      return data as { pairingCode: string; expiresAt: string };
+      return data as WhatsAppRequestPairingCodeResponse;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-connection-status"] });

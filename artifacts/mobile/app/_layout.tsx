@@ -40,9 +40,12 @@ import { NetworkBanner } from "@/components/ui/NetworkBanner";
 import { AuthProvider, useAuth } from "@/providers/AuthProvider";
 import { ThemeProvider } from "@/providers/ThemeProvider";
 import { NotificationProvider } from "@/providers/NotificationProvider";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, getApiUrl } from "@/lib/queryClient";
 import { getItem, StorageKeys } from "@/lib/storage";
 import { useBiometricLock } from "@/hooks/useBiometricLock";
+import { setBaseUrl } from "@workspace/api-client-react";
+
+setBaseUrl(getApiUrl().replace(/\/api\/?$/, ""));
 
 SplashScreen.preventAutoHideAsync();
 

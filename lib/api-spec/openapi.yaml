@@ -3,14 +3,466 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: WaTracker Pro API — WhatsApp online-status tracking system
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication
+  - name: tracker
+    description: WhatsApp tracker sessions and tracking engine
+  - name: whatsapp
+    description: Baileys WhatsApp account linking
+  - name: contacts
+    description: Tracked contacts
+  - name: sessions
+    description: Activity sessions
+  - name: notifications
+    description: User notifications
+  - name: reports
+    description: Analytics reports
+  - name: subscription
+    description: Subscription plans
+  - name: settings
+    description: User settings
+
+# ---------------------------------------------------------------------------
+# Security
+# ---------------------------------------------------------------------------
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: token
+
+  schemas:
+    # -------- shared primitives --------
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required: [success]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    # -------- auth --------
+    RegisterRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        name:
+          type: string
+      required: [email, password, name]
+
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+      required: [email, password]
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, email, name, createdAt]
+
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        user:
+          $ref: "#/components/schemas/UserProfile"
+      required: [success, user]
+
+    # -------- tracker: session --------
+    TrackerSessionStatus:
+      type: object
+      properties:
+        success:
+          type: boolean
+        status:
+          type: string
+          enum: [idle, loading, qr_ready, pairing_code, connected, disconnected, error]
+        connectionType:
+          type: string
+          enum: [qr, pairing_code]
+        qrCodeBase64:
+          type: string
+          nullable: true
+        pairingCode:
+          type: string
+          nullable: true
+        pairingExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        connectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastActiveAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastError:
+          type: string
+          nullable: true
+        reconnectAttempts:
+          type: integer
+      required: [success, status]
+
+    StartSessionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+      required: [success, status]
+
+    PairingCodeRequest:
+      type: object
+      properties:
+        phoneNumber:
+          type: string
+          description: "E.164 phone number e.g. +923001234567"
+      required: [phoneNumber]
+
+    PairingCodeResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        pairingCode:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+      required: [success, pairingCode, expiresAt]
+
+    PairingVerifyGetResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        accepted:
+          type: boolean
+        status:
+          type: string
+          enum: [waiting, accepted, expired, error]
+        pairingCode:
+          type: string
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+      required: [success, accepted, status]
+
+    PairingVerifyPostResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        linked:
+          type: boolean
+        status:
+          type: string
+        phoneNumber:
+          type: string
+          nullable: true
+        connectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastError:
+          type: string
+          nullable: true
+      required: [success, linked, status]
+
+    # -------- tracker: jobs --------
+    TrackRequest:
+      type: object
+      properties:
+        phoneNumber:
+          type: string
+        label:
+          type: string
+        pollIntervalSeconds:
+          type: integer
+          minimum: 5
+          maximum: 60
+          default: 7
+      required: [phoneNumber]
+
+    TrackResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        jobId:
+          type: integer
+        phoneNumber:
+          type: string
+        message:
+          type: string
+      required: [success, jobId, phoneNumber, message]
+
+    TrackerJob:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        phoneNumber:
+          type: string
+        label:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+        lastStatus:
+          type: string
+        lastStatusAt:
+          type: string
+          format: date-time
+          nullable: true
+        pollIntervalSeconds:
+          type: integer
+        workerRunning:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, userId, phoneNumber, isActive, lastStatus, pollIntervalSeconds, workerRunning, createdAt, updatedAt]
+
+    JobsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackerJob"
+      required: [success, jobs]
+
+    # -------- tracker: activity --------
+    ActivityLog:
+      type: object
+      properties:
+        id:
+          type: integer
+        jobId:
+          type: integer
+        userId:
+          type: integer
+        phoneNumber:
+          type: string
+        event:
+          type: string
+          enum: [online, offline, last_seen]
+        statusText:
+          type: string
+          nullable: true
+        sessionStartAt:
+          type: string
+          format: date-time
+          nullable: true
+        sessionEndAt:
+          type: string
+          format: date-time
+          nullable: true
+        durationSeconds:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, jobId, userId, phoneNumber, event, createdAt]
+
+    ActivityResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        phoneNumber:
+          type: string
+        logs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityLog"
+      required: [success, phoneNumber, logs]
+
+    DailyBreakdownEntry:
+      type: object
+      properties:
+        sessions:
+          type: integer
+        durationSeconds:
+          type: integer
+      required: [sessions, durationSeconds]
+
+    TrackerStats:
+      type: object
+      properties:
+        totalSessions:
+          type: integer
+        totalOnlineDurationSeconds:
+          type: integer
+        averageSessionSeconds:
+          type: integer
+        currentStatus:
+          type: string
+        lastActivity:
+          type: string
+          format: date-time
+          nullable: true
+        dailyBreakdown:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/DailyBreakdownEntry"
+        periodDays:
+          type: integer
+      required: [totalSessions, totalOnlineDurationSeconds, averageSessionSeconds, currentStatus, periodDays]
+
+    StatsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        phoneNumber:
+          type: string
+        stats:
+          $ref: "#/components/schemas/TrackerStats"
+      required: [success, phoneNumber, stats]
+
+    WsInfoResponse:
+      type: object
+      properties:
+        wsUrl:
+          type: string
+        connectedClients:
+          type: integer
+        note:
+          type: string
+      required: [wsUrl, connectedClients, note]
+
+    # -------- whatsapp (Baileys) --------
+    WhatsAppConnectionStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [not_connected, pending_pairing, connected, disconnected, reconnecting, error]
+        phoneNumber:
+          type: string
+          nullable: true
+        connectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        pairingCode:
+          type: string
+          nullable: true
+        pairingCodeExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastError:
+          type: string
+          nullable: true
+        reconnectAttempts:
+          type: integer
+          nullable: true
+      required: [status]
+
+    WhatsAppPairingCodeStatus:
+      type: object
+      properties:
+        accepted:
+          type: boolean
+        status:
+          type: string
+          enum: [waiting, accepted, expired, error]
+        pairingCode:
+          type: string
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+      required: [accepted, status]
+
+    WhatsAppRequestPairingCodeResponse:
+      type: object
+      properties:
+        pairingCode:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+      required: [pairingCode, expiresAt]
+
+    WhatsAppDisconnectResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required: [success]
+
+    WhatsAppReconnectResponse:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
 paths:
+  # ---- health ----
   /healthz:
     get:
       operationId: healthCheck
@@ -24,13 +476,452 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
-components:
-  schemas:
-    HealthStatus:
-      type: object
-      properties:
-        status:
-          type: string
-      required:
-        - status
 
+  # ---- auth ----
+  /auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "200":
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login successful — JWT set in httpOnly cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Logout — clears session cookie
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current authenticated user
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ---- tracker: session ----
+  /tracker/session/start:
+    post:
+      operationId: startTrackerSession
+      tags: [tracker]
+      summary: Start a Puppeteer WhatsApp browser session
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Session started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StartSessionResponse"
+        "500":
+          description: Failed to start
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /tracker/session/status:
+    get:
+      operationId: getTrackerSessionStatus
+      tags: [tracker]
+      summary: Get current tracker session status
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Session status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackerSessionStatus"
+
+  /tracker/session:
+    delete:
+      operationId: deleteTrackerSession
+      tags: [tracker]
+      summary: Disconnect and remove the tracker session
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Disconnected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+
+  /tracker/session/pairing-code:
+    post:
+      operationId: requestTrackerPairingCode
+      tags: [tracker]
+      summary: Request a Baileys pairing code via the tracker namespace
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairingCodeRequest"
+      responses:
+        "200":
+          description: Pairing code generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingCodeResponse"
+        "400":
+          description: Invalid phone number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: WhatsApp server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /tracker/session/verify:
+    get:
+      operationId: pollTrackerPairingStatus
+      tags: [tracker]
+      summary: Poll whether the pairing code has been accepted
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Current pairing acceptance status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingVerifyGetResponse"
+    post:
+      operationId: verifyTrackerConnection
+      tags: [tracker]
+      summary: Confirm whether the Baileys session is fully linked
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Connection verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingVerifyPostResponse"
+
+  # ---- tracker: jobs ----
+  /tracker/track:
+    post:
+      operationId: startTracking
+      tags: [tracker]
+      summary: Start tracking a phone number
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrackRequest"
+      responses:
+        "200":
+          description: Tracking started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackResponse"
+        "400":
+          description: Missing phone number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /tracker/untrack/{jobId}:
+    delete:
+      operationId: stopTracking
+      tags: [tracker]
+      summary: Stop tracking a job by ID
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Tracking stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /tracker/jobs:
+    get:
+      operationId: getTrackerJobs
+      tags: [tracker]
+      summary: List all tracking jobs for the current user
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobsResponse"
+
+  # ---- tracker: analytics ----
+  /tracker/activity/{phoneNumber}:
+    get:
+      operationId: getTrackerActivity
+      tags: [tracker]
+      summary: Get raw activity logs for a phone number (last 7 days by default)
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: phoneNumber
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Activity logs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityResponse"
+
+  /tracker/stats/{phoneNumber}:
+    get:
+      operationId: getTrackerStats
+      tags: [tracker]
+      summary: Get aggregated stats for a phone number (7-day window)
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: phoneNumber
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Aggregated stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+
+  /tracker/ws/info:
+    get:
+      operationId: getWsInfo
+      tags: [tracker]
+      summary: Get WebSocket connection info
+      responses:
+        "200":
+          description: WebSocket info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WsInfoResponse"
+
+  # ---- whatsapp (Baileys) ----
+  /whatsapp/request-pairing-code:
+    post:
+      operationId: requestWhatsAppPairingCode
+      tags: [whatsapp]
+      summary: Generate a Baileys pairing code for linking a WhatsApp account
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairingCodeRequest"
+      responses:
+        "200":
+          description: Pairing code generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppRequestPairingCodeResponse"
+        "400":
+          description: Invalid phone number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: WhatsApp server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /whatsapp/connection-status:
+    get:
+      operationId: getWhatsAppConnectionStatus
+      tags: [whatsapp]
+      summary: Get the current Baileys connection state
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Connection status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppConnectionStatus"
+
+  /whatsapp/pairing-code-status:
+    get:
+      operationId: getWhatsAppPairingCodeStatus
+      tags: [whatsapp]
+      summary: Poll whether the pairing code has been accepted (Baileys path)
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Pairing code acceptance status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppPairingCodeStatus"
+
+  /whatsapp/disconnect:
+    post:
+      operationId: disconnectWhatsApp
+      tags: [whatsapp]
+      summary: Disconnect the Baileys session
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Disconnected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppDisconnectResponse"
+        "500":
+          description: Disconnect failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /whatsapp/reconnect:
+    post:
+      operationId: reconnectWhatsApp
+      tags: [whatsapp]
+      summary: Trigger a reconnect of the Baileys session
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Reconnect triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhatsAppReconnectResponse"

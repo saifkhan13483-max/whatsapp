@@ -208,6 +208,8 @@ export const trackerSessionsTable = pgTable("tracker_sessions", {
   qrCodeBase64: text("qr_code_base64"),
   cookiesJson: text("cookies_json"),
   localStorageJson: text("local_storage_json"),
+  pairingCode: varchar("pairing_code", { length: 20 }),
+  pairingExpiresAt: timestamp("pairing_expires_at"),
   lastError: text("last_error"),
   reconnectAttempts: integer("reconnect_attempts").default(0).notNull(),
   connectedAt: timestamp("connected_at"),

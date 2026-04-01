@@ -6,6 +6,12 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
+export interface TrackRequest {
+  phoneNumber: string;
+  label?: string;
+  /**
+   * @minimum 5
+   * @maximum 60
+   */
+  pollIntervalSeconds?: number;
 }

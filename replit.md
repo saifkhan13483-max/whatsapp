@@ -60,6 +60,18 @@ Full-featured WhatsApp activity monitoring & parental control app.
 - `useBiometricLock`: Added `autoLockSeconds`, `setAutoLockSeconds` properties
 - `useReports`: Added `sessions`, `hourlyHeatmap` fields to `Report` type
 
+### Tracker & WhatsApp Hooks (v3.0)
+- `useTrackerSession` (`hooks/useTrackerSession.ts`): start session, request pairing code, poll verify, verify connection, disconnect — types imported from generated OpenAPI schemas
+- `useTrackerJobs` + `useTrackerActivity` + `useTrackerStats` (`hooks/useTrackerJobs.ts`): start/stop tracking jobs, fetch activity logs, fetch 7-day stats — types from generated schemas
+- `useWhatsAppConnection` (`hooks/useWhatsAppConnection.ts`): Baileys pairing code flow, countdown timer, auto-refresh, friendly errors — types imported from `@workspace/api-client-react`
+
+### OpenAPI + Orval Codegen
+- Full OpenAPI spec at `lib/api-spec/openapi.yaml` — 22 endpoints covering health, auth, tracker, and WhatsApp
+- Orval generates React Query hooks into `lib/api-client-react/src/generated/api.ts` (12 hooks)
+- Orval generates Zod schemas into `lib/api-zod/src/generated/`
+- Mobile app imports generated types from `@workspace/api-client-react`
+- `setBaseUrl` configured in `app/_layout.tsx` so generated hooks work in Expo
+
 ### Tech
 - Expo Router (file-based routing)
 - React Query for server state
@@ -208,7 +220,7 @@ Tables created via `drizzle-kit push` (run from `lib/db`):
 - geofence_zones
 - whatsapp_sessions — stores Baileys connection state per user (creds + keys encrypted in DB); columns: id, userId, phoneNumber, status, lastSeen, lastError, reconnectAttempts, createdAt, updatedAt
 - whatsapp_auth_keys — individual auth key entries for Baileys (key type + id + JSON value); FK to whatsapp_sessions
-- tracker_sessions — stores Puppeteer/Baileys tracker connections per user; columns: id, userId, phone, sessionData, status, connectionType, lastError, reconnectAttempts, createdAt, updatedAt
+- tracker_sessions — stores Puppeteer/Baileys tracker connections per user; columns: id, userId, status, connectionType, qrCodeBase64, cookiesJson, localStorageJson, pairingCode, pairingExpiresAt, lastError, reconnectAttempts, connectedAt, lastActiveAt, createdAt, updatedAt
 - tracker_jobs — active tracking jobs (phone, status, nextPollAt, jobId)
 - tracker_logs — per-job online/offline event log
 

@@ -5,7 +5,9 @@
  * WaTracker Pro API — WhatsApp online-status tracking system
  * OpenAPI spec version: 0.1.0
  */
+import type { UserProfile } from "./userProfile";
 
-export interface HealthStatus {
-  status: string;
+export interface AuthResponse {
+  success: boolean;
+  user: UserProfile;
 }

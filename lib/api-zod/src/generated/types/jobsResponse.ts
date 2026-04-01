@@ -5,7 +5,9 @@
  * WaTracker Pro API — WhatsApp online-status tracking system
  * OpenAPI spec version: 0.1.0
  */
+import type { TrackerJob } from "./trackerJob";
 
-export interface HealthStatus {
-  status: string;
+export interface JobsResponse {
+  success: boolean;
+  jobs: TrackerJob[];
 }
