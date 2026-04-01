@@ -263,10 +263,11 @@ export async function requestPairingCode(
 
       if (!entry.connectionAccepted) {
         activeSockets.delete(userId);
-        await persistError(
-          userId,
-          "Connection closed before pairing completed. Check the code and try again."
-        );
+        await upsertSession(userId, {
+          status: "error",
+          lastError:
+            "WhatsApp rejected the code. Make sure you're entering it in the WhatsApp account for the phone number you typed. Request a new code if needed.",
+        });
         broadcast(userId, {
           type: "session_disconnected",
           userId,

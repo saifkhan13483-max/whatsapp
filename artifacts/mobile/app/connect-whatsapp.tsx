@@ -44,6 +44,7 @@ export default function ConnectWhatsAppScreen() {
   const [phoneError, setPhoneError] = useState<string | undefined>();
   const [pairingCode, setPairingCode] = useState<string>("");
   const [pairingExpiresAt, setPairingExpiresAt] = useState<string>("");
+  const [submittedPhone, setSubmittedPhone] = useState<string>("");
   const [retryCountdown, setRetryCountdown] = useState(0);
   const retryIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -89,11 +90,22 @@ export default function ConnectWhatsAppScreen() {
         setCurrentStep(3);
       } else if (pairingCodeStatus.status === "error") {
         setIsPolling(false);
-        Toast.show({
-          type: "error",
-          text1: "Connection error",
-          text2: "Could not reach WhatsApp. Please request a new code.",
-        });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert(
+          "Code rejected by WhatsApp",
+          `WhatsApp couldn't link the device. This usually means the code was entered in a WhatsApp account for a different number.\n\nYou entered: ${submittedPhone}\n\nMake sure you're entering the code in the WhatsApp app on the phone with that number.`,
+          [
+            {
+              text: "Change Number",
+              style: "default",
+              onPress: handleWrongNumber,
+            },
+            {
+              text: "Try Again",
+              onPress: handleRequestNewCode,
+            },
+          ]
+        );
       }
     }
   }, [pairingCodeStatus, currentStep]);
@@ -173,6 +185,7 @@ export default function ConnectWhatsAppScreen() {
       const result = await requestPairingCode(fullPhone);
       setPairingCode(result.pairingCode);
       setPairingExpiresAt(result.expiresAt);
+      setSubmittedPhone(fullPhone);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       animateStep(2);
     } catch {
@@ -181,9 +194,8 @@ export default function ConnectWhatsAppScreen() {
   }
 
   async function handleRequestNewCode() {
-    const fullPhone = `${selectedCountry.dialCode}${phoneValue.replace(/\D/g, "")}`;
     try {
-      const result = await requestPairingCode(fullPhone);
+      const result = await requestPairingCode(submittedPhone);
       setPairingCode(result.pairingCode);
       setPairingExpiresAt(result.expiresAt);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -194,6 +206,14 @@ export default function ConnectWhatsAppScreen() {
         text2: e?.message ?? "Please try again.",
       });
     }
+  }
+
+  function handleWrongNumber() {
+    setIsPolling(false);
+    setPairingCode("");
+    setPairingExpiresAt("");
+    setSubmittedPhone("");
+    animateStep(1);
   }
 
   function handleLaterPress() {
@@ -268,10 +288,12 @@ export default function ConnectWhatsAppScreen() {
               colors={colors}
               pairingCode={pairingCode}
               expiresAt={pairingExpiresAt}
+              submittedPhone={submittedPhone}
               codeSecondsLeft={codeSecondsLeft}
               isCodeExpired={isCodeExpired}
               isLoadingNew={isRequestingCode}
               onRequestNew={handleRequestNewCode}
+              onWrongNumber={handleWrongNumber}
               onLater={handleLaterPress}
             />
           )}
@@ -364,10 +386,12 @@ function Step2({
   colors,
   pairingCode,
   expiresAt,
+  submittedPhone,
   codeSecondsLeft,
   isCodeExpired,
   isLoadingNew,
   onRequestNew,
+  onWrongNumber,
   onLater,
 }: any) {
   const INSTRUCTIONS = [
@@ -386,9 +410,27 @@ function Step2({
       <Text style={[typography.h2, { color: colors.text, textAlign: "center" }]}>
         Enter This Code in WhatsApp
       </Text>
-      <Text style={[typography.body, { color: colors.secondaryText, textAlign: "center" }]}>
-        Open WhatsApp on your phone and follow the steps below
-      </Text>
+
+      {submittedPhone ? (
+        <View style={[styles.phoneTargetBox, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "30" }]}>
+          <Ionicons name="phone-portrait-outline" size={16} color={colors.primary} />
+          <Text style={[typography.small, { color: colors.secondaryText, flex: 1 }]}>
+            Enter this code in WhatsApp on
+          </Text>
+          <Text style={[typography.bodyMedium, { color: colors.primary }]}>
+            {submittedPhone}
+          </Text>
+          <TouchableOpacity onPress={onWrongNumber} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={[typography.small, { color: colors.info, textDecorationLine: "underline" }]}>
+              Wrong?
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <Text style={[typography.body, { color: colors.secondaryText, textAlign: "center" }]}>
+          Open WhatsApp on your phone and follow the steps below
+        </Text>
+      )}
 
       {isCodeExpired ? (
         <View style={[styles.expiredBox, { backgroundColor: colors.error + "18", borderColor: colors.error + "50" }]}>
@@ -444,16 +486,29 @@ function Step2({
         ))}
       </View>
 
-      <TouchableOpacity
-        onPress={onLater}
-        style={styles.laterBtn}
-        accessibilityLabel="Do this later"
-        accessibilityRole="button"
-      >
-        <Text style={[typography.bodyMedium, { color: colors.secondaryText }]}>
-          I'll do this later
-        </Text>
-      </TouchableOpacity>
+      <View style={{ gap: spacing.xs, alignItems: "center" }}>
+        <TouchableOpacity
+          onPress={onWrongNumber}
+          style={styles.laterBtn}
+          accessibilityLabel="Change phone number"
+          accessibilityRole="button"
+        >
+          <Text style={[typography.bodyMedium, { color: colors.info }]}>
+            Wrong number? Change it
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={onLater}
+          style={styles.laterBtn}
+          accessibilityLabel="Do this later"
+          accessibilityRole="button"
+        >
+          <Text style={[typography.bodyMedium, { color: colors.secondaryText }]}>
+            I'll do this later
+          </Text>
+        </TouchableOpacity>
+      </View>
     </Animated.View>
   );
 }
@@ -662,6 +717,17 @@ const styles = StyleSheet.create({
   },
   laterBtn: {
     paddingVertical: spacing.sm,
+  },
+  phoneTargetBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
+    borderRadius: 10,
+    borderWidth: 1,
+    width: "100%",
   },
   countdownBox: {
     flexDirection: "row",
