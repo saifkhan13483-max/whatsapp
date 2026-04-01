@@ -11,27 +11,56 @@ import { eq } from "drizzle-orm";
 import crypto from "crypto";
 import { logger } from "./logger.js";
 
-const APP_SECRET = process.env["JWT_SECRET"] ?? "default-secret-change-me";
-
-function encrypt(text: string): string {
-  const key = crypto.scryptSync(APP_SECRET, "salt", 32);
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-  const encrypted = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
-  return iv.toString("hex") + ":" + encrypted.toString("hex");
+const ENCRYPTION_KEY_HEX = process.env["WHATSAPP_ENCRYPTION_KEY"];
+if (!ENCRYPTION_KEY_HEX) {
+  throw new Error(
+    "WHATSAPP_ENCRYPTION_KEY is not set. Generate a 32-byte hex key and set it as an environment variable."
+  );
+}
+const ENCRYPTION_KEY = Buffer.from(ENCRYPTION_KEY_HEX, "hex");
+if (ENCRYPTION_KEY.length !== 32) {
+  throw new Error("WHATSAPP_ENCRYPTION_KEY must be exactly 32 bytes (64 hex chars).");
 }
 
-function decrypt(text: string): string {
-  try {
-    const [ivHex, encHex] = text.split(":");
-    const key = crypto.scryptSync(APP_SECRET, "salt", 32);
-    const iv = Buffer.from(ivHex, "hex");
-    const enc = Buffer.from(encHex, "hex");
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-    return Buffer.concat([decipher.update(enc), decipher.final()]).toString("utf8");
-  } catch {
-    return text;
-  }
+interface EncryptedPayload {
+  iv: string;
+  authTag: string;
+  ciphertext: string;
+}
+
+function encryptGCM(plaintext: string): EncryptedPayload {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return {
+    iv: iv.toString("hex"),
+    authTag: authTag.toString("hex"),
+    ciphertext: encrypted.toString("hex"),
+  };
+}
+
+function decryptGCM(payload: EncryptedPayload): string {
+  const iv = Buffer.from(payload.iv, "hex");
+  const authTag = Buffer.from(payload.authTag, "hex");
+  const ciphertext = Buffer.from(payload.ciphertext, "hex");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+}
+
+function isLegacyCBC(raw: string): boolean {
+  return /^[0-9a-f]{32}:[0-9a-f]+$/i.test(raw);
+}
+
+function decryptLegacyCBC(text: string): string {
+  const JWT_SECRET = process.env["JWT_SECRET"] ?? "default-secret-change-me";
+  const [ivHex, encHex] = text.split(":");
+  const key = crypto.scryptSync(JWT_SECRET, "salt", 32);
+  const iv = Buffer.from(ivHex!, "hex");
+  const enc = Buffer.from(encHex!, "hex");
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+  return Buffer.concat([decipher.update(enc), decipher.final()]).toString("utf8");
 }
 
 export interface DbAuthState {
@@ -59,8 +88,18 @@ export async function useDbAuthState(userId: number): Promise<DbAuthState> {
 
   if (rows.length > 0 && rows[0].sessionData) {
     try {
-      const raw = decrypt(rows[0].sessionData);
-      const parsed: PersistedAuthData = JSON.parse(raw, BufferJSON.reviver);
+      const raw = rows[0].sessionData;
+      let plaintext: string;
+
+      if (isLegacyCBC(raw)) {
+        logger.warn({ userId }, "Migrating session from legacy AES-CBC to AES-GCM");
+        plaintext = decryptLegacyCBC(raw);
+      } else {
+        const payload: EncryptedPayload = JSON.parse(raw);
+        plaintext = decryptGCM(payload);
+      }
+
+      const parsed: PersistedAuthData = JSON.parse(plaintext, BufferJSON.reviver);
       creds = parsed.creds as AuthenticationCreds;
       keyStore = parsed.keys ?? {};
       logger.debug({ userId }, "Restored Baileys auth state from DB");
@@ -76,11 +115,16 @@ export async function useDbAuthState(userId: number): Promise<DbAuthState> {
     try {
       const data: PersistedAuthData = { creds, keys: keyStore };
       const serialized = JSON.stringify(data, BufferJSON.replacer);
-      const encrypted = encrypt(serialized);
+      const payload = encryptGCM(serialized);
+      const encryptedJson = JSON.stringify(payload);
 
       await db
         .update(whatsappSessionsTable)
-        .set({ sessionData: encrypted, lastActiveAt: new Date(), updatedAt: new Date() })
+        .set({
+          sessionData: encryptedJson,
+          lastActiveAt: new Date(),
+          updatedAt: new Date(),
+        })
         .where(eq(whatsappSessionsTable.userId, userId));
     } catch (err) {
       logger.error({ err, userId }, "Failed to persist Baileys auth state to DB");
@@ -101,14 +145,16 @@ export async function useDbAuthState(userId: number): Promise<DbAuthState> {
       return Promise.resolve(result as { [id: string]: SignalDataTypeMap[T] });
     },
 
-    set(data: { [T in keyof SignalDataTypeMap]?: { [id: string]: SignalDataTypeMap[T] | null } }): Promise<void> {
+    set(data: {
+      [T in keyof SignalDataTypeMap]?: { [id: string]: SignalDataTypeMap[T] | null };
+    }): Promise<void> {
       for (const [type, entries] of Object.entries(data)) {
         if (!keyStore[type]) keyStore[type] = {};
         for (const [id, value] of Object.entries(entries as Record<string, unknown>)) {
           if (value == null) {
-            delete keyStore[type][id];
+            delete keyStore[type]![id];
           } else {
-            keyStore[type][id] = value;
+            keyStore[type]![id] = value;
           }
         }
       }

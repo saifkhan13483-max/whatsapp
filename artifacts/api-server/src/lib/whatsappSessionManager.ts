@@ -5,7 +5,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import { db } from "@workspace/db";
-import { whatsappSessionsTable } from "@workspace/db/schema";
+import { whatsappSessionsTable, pairingRateLimitsTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { logger } from "./logger.js";
 import { useDbAuthState } from "./dbAuthState.js";
@@ -28,22 +28,43 @@ interface SocketEntry {
 
 const activeSockets = new Map<number, SocketEntry>();
 
-const rateLimitMap = new Map<number, { count: number; windowStart: number }>();
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const PAIRING_CODE_TTL_MS = 5 * 60 * 1000;
 const PAIRING_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RECONNECT_ATTEMPTS = 5;
 
-function checkRateLimit(userId: number): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(userId);
-  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
-    rateLimitMap.set(userId, { count: 1, windowStart: now });
+async function checkRateLimit(userId: number): Promise<boolean> {
+  const now = new Date();
+  const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MS);
+
+  const rows = await db
+    .select()
+    .from(pairingRateLimitsTable)
+    .where(eq(pairingRateLimitsTable.userId, userId))
+    .limit(1);
+
+  if (!rows.length || rows[0].windowStart < windowStart) {
+    if (rows.length) {
+      await db
+        .update(pairingRateLimitsTable)
+        .set({ count: 1, windowStart: now, updatedAt: now })
+        .where(eq(pairingRateLimitsTable.userId, userId));
+    } else {
+      await db
+        .insert(pairingRateLimitsTable)
+        .values({ userId, count: 1, windowStart: now, updatedAt: now });
+    }
     return true;
   }
-  if (entry.count >= RATE_LIMIT_MAX) return false;
-  entry.count++;
+
+  if (rows[0].count >= RATE_LIMIT_MAX) return false;
+
+  await db
+    .update(pairingRateLimitsTable)
+    .set({ count: rows[0].count + 1, updatedAt: now })
+    .where(eq(pairingRateLimitsTable.userId, userId));
+
   return true;
 }
 
@@ -148,7 +169,7 @@ export async function requestPairingCode(
   userId: number,
   phoneNumber: string
 ): Promise<{ pairingCode: string; expiresAt: string }> {
-  if (!checkRateLimit(userId)) {
+  if (!(await checkRateLimit(userId))) {
     throw makeApiError(
       "Too many attempts. Please wait 10 minutes and try again.",
       429
@@ -526,6 +547,42 @@ export async function reconnect(
     await persistError(userId, err?.message ?? "Reconnect failed");
     return { status: "failed" };
   }
+}
+
+export async function getHealthStatus(userId: number): Promise<{
+  healthy: boolean;
+  status: string;
+  socketActive: boolean;
+  phoneNumber?: string;
+  connectedAt?: string;
+  lastActiveAt?: string;
+  reconnectAttempts?: number;
+  lastError?: string;
+}> {
+  const rows = await db
+    .select()
+    .from(whatsappSessionsTable)
+    .where(eq(whatsappSessionsTable.userId, userId))
+    .limit(1);
+
+  if (!rows.length) {
+    return { healthy: false, status: "not_connected", socketActive: false };
+  }
+
+  const row = rows[0];
+  const socketActive = activeSockets.has(userId);
+  const healthy = row.status === "connected" && socketActive;
+
+  return {
+    healthy,
+    status: row.status ?? "not_connected",
+    socketActive,
+    phoneNumber: row.maskedPhone ?? undefined,
+    connectedAt: row.connectedAt?.toISOString(),
+    lastActiveAt: row.lastActiveAt?.toISOString(),
+    reconnectAttempts: row.reconnectAttempts ?? 0,
+    lastError: row.lastError ?? undefined,
+  };
 }
 
 export async function autoReconnectAllSessions(): Promise<void> {

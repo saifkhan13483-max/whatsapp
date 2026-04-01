@@ -6,22 +6,23 @@ import {
   getPairingCodeStatus,
   disconnect,
   reconnect,
+  getHealthStatus,
 } from "../lib/whatsappSessionManager.js";
 import { parsePhoneNumber, isValidPhoneNumber } from "libphonenumber-js";
 
 const router = Router();
 router.use(requireAuth);
 
-router.post("/request-pairing-code", async (req: AuthRequest, res) => {
+async function handleRequestPairingCode(req: AuthRequest, res: any) {
   try {
     const { phoneNumber } = req.body as { phoneNumber?: string };
     if (!phoneNumber || typeof phoneNumber !== "string") {
-      res.status(400).json({ error: "Phone number is required." });
+      res.status(400).json({ code: "INVALID_INPUT", message: "Phone number is required." });
       return;
     }
     const trimmed = phoneNumber.trim();
     if (!isValidPhoneNumber(trimmed)) {
-      res.status(400).json({ error: "Please enter a valid phone number." });
+      res.status(400).json({ code: "INVALID_PHONE", message: "Please enter a valid phone number with country code (e.g. +923001234567)." });
       return;
     }
     const parsed = parsePhoneNumber(trimmed);
@@ -30,18 +31,42 @@ router.post("/request-pairing-code", async (req: AuthRequest, res) => {
     res.json(result);
   } catch (e: any) {
     const status = e?.statusCode ?? 500;
-    res.status(status).json({ error: e?.message ?? "WhatsApp server error." });
+    res.status(status).json({ code: "SERVER_ERROR", message: e?.message ?? "WhatsApp server error." });
   }
-});
+}
 
-router.get("/connection-status", async (req: AuthRequest, res) => {
+async function handleConnectionStatus(req: AuthRequest, res: any) {
   try {
     const status = await getConnectionStatus(req.userId!);
     res.json(status);
   } catch {
     res.json({ status: "not_connected" });
   }
-});
+}
+
+async function handleDisconnect(req: AuthRequest, res: any) {
+  try {
+    await disconnect(req.userId!);
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ code: "SERVER_ERROR", message: e?.message ?? "Failed to disconnect." });
+  }
+}
+
+async function handleReconnect(req: AuthRequest, res: any) {
+  try {
+    const result = await reconnect(req.userId!);
+    res.json(result);
+  } catch {
+    res.json({ status: "failed" });
+  }
+}
+
+router.post("/request-pairing-code", handleRequestPairingCode);
+router.post("/link", handleRequestPairingCode);
+
+router.get("/connection-status", handleConnectionStatus);
+router.get("/status", handleConnectionStatus);
 
 router.get("/pairing-code-status", async (req: AuthRequest, res) => {
   try {
@@ -52,21 +77,15 @@ router.get("/pairing-code-status", async (req: AuthRequest, res) => {
   }
 });
 
-router.post("/disconnect", async (req: AuthRequest, res) => {
-  try {
-    await disconnect(req.userId!);
-    res.json({ success: true });
-  } catch (e: any) {
-    res.status(500).json({ error: e?.message ?? "Failed to disconnect." });
-  }
-});
+router.post("/disconnect", handleDisconnect);
+router.post("/reconnect", handleReconnect);
 
-router.post("/reconnect", async (req: AuthRequest, res) => {
+router.get("/health", async (req: AuthRequest, res) => {
   try {
-    const result = await reconnect(req.userId!);
-    res.json(result);
+    const health = await getHealthStatus(req.userId!);
+    res.json(health);
   } catch {
-    res.json({ status: "failed" });
+    res.json({ healthy: false, status: "error" });
   }
 });
 

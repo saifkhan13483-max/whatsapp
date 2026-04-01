@@ -60,10 +60,13 @@ export const API = {
   },
   WHATSAPP: {
     REQUEST_PAIRING_CODE: "/whatsapp/request-pairing-code",
+    LINK: "/whatsapp/link",
     CONNECTION_STATUS: "/whatsapp/connection-status",
+    STATUS: "/whatsapp/status",
     PAIRING_CODE_STATUS: "/whatsapp/pairing-code-status",
     DISCONNECT: "/whatsapp/disconnect",
     RECONNECT: "/whatsapp/reconnect",
+    HEALTH: "/whatsapp/health",
   },
   TRACKER: {
     SESSION_START: "/tracker/session/start",

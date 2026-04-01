@@ -218,11 +218,11 @@ Tables created via `drizzle-kit push` (run from `lib/db`):
 - dnd_rules
 - keyword_alerts
 - geofence_zones
-- whatsapp_sessions — stores Baileys connection state per user (creds + keys encrypted in DB); columns: id, userId, phoneNumber, status, lastSeen, lastError, reconnectAttempts, createdAt, updatedAt
-- whatsapp_auth_keys — individual auth key entries for Baileys (key type + id + JSON value); FK to whatsapp_sessions
+- whatsapp_sessions — stores Baileys connection state per user (creds + keys encrypted with AES-256-GCM in DB); columns: id, userId, phoneNumber, maskedPhone, status, pairingCode, pairingCodeExpiresAt, sessionData (GCM JSON payload: {iv, authTag, ciphertext}), lastError, reconnectAttempts, connectedAt, lastActiveAt, createdAt, updatedAt
+- pairing_rate_limits — DB-backed rate limiting for WhatsApp pairing code requests (max 3 per 10 min per user); columns: id, userId, windowStart, count, updatedAt
 - tracker_sessions — stores Puppeteer/Baileys tracker connections per user; columns: id, userId, status, connectionType, qrCodeBase64, cookiesJson, localStorageJson, pairingCode, pairingExpiresAt, lastError, reconnectAttempts, connectedAt, lastActiveAt, createdAt, updatedAt
 - tracker_jobs — active tracking jobs (phone, status, nextPollAt, jobId)
-- tracker_logs — per-job online/offline event log
+- activity_logs — per-job online/offline event log
 
 ## Metro Bundler Configuration
 
@@ -401,4 +401,5 @@ Express Server (port 8080)
 
 - `DATABASE_URL` — PostgreSQL connection string (auto-provisioned)
 - `JWT_SECRET` — JWT signing secret (set in shared env)
+- `WHATSAPP_ENCRYPTION_KEY` — 64-char hex key (32 bytes) for AES-256-GCM encryption of Baileys session data in DB. Must NOT be the same as JWT_SECRET. Auto-generated and set in shared env on first setup.
 - `PORT` — Server port (set per workflow)

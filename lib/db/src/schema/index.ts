@@ -188,6 +188,16 @@ export const whatsappSessionsTable = pgTable("whatsapp_sessions", {
 export type WhatsappSession = typeof whatsappSessionsTable.$inferSelect;
 export type InsertWhatsappSession = typeof whatsappSessionsTable.$inferInsert;
 
+export const pairingRateLimitsTable = pgTable("pairing_rate_limits", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  windowStart: timestamp("window_start").notNull(),
+  count: integer("count").default(1).notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type PairingRateLimit = typeof pairingRateLimitsTable.$inferSelect;
+
 export const geofenceZonesTable = pgTable("geofence_zones", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
