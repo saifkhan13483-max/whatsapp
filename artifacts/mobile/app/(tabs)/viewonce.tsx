@@ -74,7 +74,7 @@ export default function ViewOnceScreen() {
     isRefetching,
   } = useQuery<ViewOnceItem[]>({
     queryKey: ["view-once"],
-    queryFn: () => apiFetch<ViewOnceItem[]>("/view-once").catch(() => []),
+    queryFn: () => apiFetch<ViewOnceItem[]>("/chats/view-once").catch(() => []),
   });
 
   const filtered = useMemo(

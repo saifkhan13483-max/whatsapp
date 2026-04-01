@@ -50,7 +50,39 @@ router.get("/view-once", async (req: AuthRequest, res) => {
         )
       )
       .orderBy(desc(chatMessagesTable.timestamp));
-    res.json(rows);
+
+    const baseUrl = req.headers["x-forwarded-proto"]
+      ? `${req.headers["x-forwarded-proto"]}://${req.headers["host"]}`
+      : "";
+
+    const normalizeType = (t: string): "image" | "video" | "voice" => {
+      if (t.includes("image")) return "image";
+      if (t.includes("video")) return "video";
+      if (t.includes("audio") || t.includes("ptt")) return "voice";
+      return "image";
+    };
+
+    const mapped = rows.map((r) => {
+      const mediaUrl = r.mediaPath
+        ? `${baseUrl}/api/chats/media/${r.messageId}`
+        : null;
+      return {
+        id: r.id,
+        messageId: r.messageId,
+        chatJid: r.chatJid,
+        type: normalizeType(r.messageType),
+        recoveredAt: r.timestamp.toISOString(),
+        contactName: r.senderName ?? r.chatJid.split("@")[0] ?? "Unknown",
+        mediaPath: r.mediaPath,
+        mediaUrl,
+        url: mediaUrl,
+        mediaMimeType: r.mediaMimeType,
+        fromMe: r.fromMe,
+        timestamp: r.timestamp.toISOString(),
+      };
+    });
+
+    res.json(mapped);
   } catch {
     res.status(500).json({ error: "Failed to fetch view-once media" });
   }

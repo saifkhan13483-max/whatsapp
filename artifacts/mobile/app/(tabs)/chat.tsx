@@ -18,9 +18,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 
 import { useColors } from "@/hooks/useColors";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/lib/api";
-import { Conversation } from "@/components/ui/ConversationRow";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonLoader } from "@/components/ui/SkeletonLoader";
 import { SwipeableRow } from "@/components/ui/SwipeableRow";
@@ -31,11 +30,26 @@ import { typography } from "@/constants/typography";
 import { spacing } from "@/constants/spacing";
 import { formatTimeLabel } from "@/lib/formatters";
 
+interface Chat {
+  chatJid: string;
+  lastMessage: string | null;
+  lastMessageType: string | null;
+  lastMessageTime: string;
+  isViewOnce: boolean;
+  fromMe: boolean;
+  senderName: string | null;
+}
+
+function chatDisplayName(chat: Chat): string {
+  if (chat.senderName) return chat.senderName;
+  return chat.chatJid.split("@")[0] ?? chat.chatJid;
+}
+
 const FILTERS = [
   { label: "All", value: "all", icon: "chatbubbles" },
-  { label: "Unread", value: "unread", icon: "mail-unread" },
-  { label: "Has Media", value: "media", icon: "image" },
   { label: "View-Once", value: "viewonce", icon: "eye" },
+  { label: "Has Media", value: "media", icon: "image" },
+  { label: "From Me", value: "fromme", icon: "arrow-up-circle" },
 ];
 
 function ConversationItem({
@@ -43,40 +57,40 @@ function ConversationItem({
   privacyMode,
   onPress,
 }: {
-  conversation: Conversation;
+  conversation: Chat;
   privacyMode: boolean;
   onPress: () => void;
 }) {
   const colors = useColors();
-  const unread = (conversation.unreadCount ?? 0) > 0;
+  const displayName = chatDisplayName(conversation);
 
   return (
     <TouchableOpacity
       style={[
         styles.convRow,
         {
-          backgroundColor: unread ? colors.primary + "08" : colors.card,
+          backgroundColor: colors.card,
           borderBottomColor: colors.border,
         },
       ]}
       onPress={onPress}
       activeOpacity={0.7}
-      accessibilityLabel={`Conversation with ${conversation.contactName}, ${unread ? `${conversation.unreadCount} unread` : "no unread messages"}`}
+      accessibilityLabel={`Conversation with ${displayName}`}
       accessibilityRole="button"
     >
-      <AvatarCircle name={conversation.contactName} size={52} isOnline={conversation.isOnline} />
+      <AvatarCircle name={displayName} size={52} isOnline={false} />
       <View style={styles.convContent}>
         <View style={styles.convTopRow}>
           <Text
             style={[
               typography.bodyMedium,
-              { color: colors.text, flex: 1, fontFamily: unread ? "Inter_600SemiBold" : "Inter_500Medium" },
+              { color: colors.text, flex: 1, fontFamily: "Inter_500Medium" },
             ]}
             numberOfLines={1}
           >
-            {conversation.contactName}
+            {displayName}
           </Text>
-          <Text style={[typography.small, { color: unread ? colors.primary : colors.secondaryText }]}>
+          <Text style={[typography.small, { color: colors.secondaryText }]}>
             {formatTimeLabel(conversation.lastMessageTime)}
           </Text>
         </View>
@@ -87,27 +101,20 @@ function ConversationItem({
             <Text
               style={[
                 typography.caption,
-                {
-                  color: unread ? colors.text : colors.secondaryText,
-                  flex: 1,
-                  fontFamily: unread ? "Inter_500Medium" : "Inter_400Regular",
-                },
+                { color: colors.secondaryText, flex: 1, fontFamily: "Inter_400Regular" },
               ]}
               numberOfLines={1}
             >
-              {conversation.lastMessage || "No messages yet"}
+              {conversation.fromMe ? "You: " : ""}
+              {conversation.isViewOnce
+                ? "📷 View-once media"
+                : conversation.lastMessage || "No messages yet"}
             </Text>
           )}
-          {unread && (
-            <BadgeCount count={conversation.unreadCount} color={colors.primary} />
+          {conversation.isViewOnce && (
+            <BadgeCount count={1} color={colors.purple ?? colors.primary} />
           )}
         </View>
-        {conversation.isOnline && (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
-            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }} />
-            <Text style={[typography.small, { color: colors.primary }]}>Online</Text>
-          </View>
-        )}
       </View>
     </TouchableOpacity>
   );
@@ -130,14 +137,14 @@ export default function ChatTrackerScreen() {
     isLoading,
     refetch,
     isRefetching,
-  } = useQuery<Conversation[]>({
-    queryKey: ["conversations"],
-    queryFn: () => apiFetch<Conversation[]>("/conversations").catch(() => []),
+  } = useQuery<Chat[]>({
+    queryKey: ["chats"],
+    queryFn: () => apiFetch<Chat[]>("/chats").catch(() => []),
     refetchInterval: 30000,
   });
 
-  const totalUnread = useMemo(
-    () => conversations.reduce((acc, c) => acc + (c.unreadCount ?? 0), 0),
+  const totalViewOnce = useMemo(
+    () => conversations.filter((c) => c.isViewOnce).length,
     [conversations]
   );
 
@@ -145,11 +152,20 @@ export default function ChatTrackerScreen() {
     () =>
       conversations.filter((c) => {
         const q = query.toLowerCase();
+        const displayName = chatDisplayName(c);
         const matchesSearch =
-          c.contactName.toLowerCase().includes(q) ||
-          (c.lastMessage ?? "").toLowerCase().includes(q);
+          displayName.toLowerCase().includes(q) ||
+          (c.lastMessage ?? "").toLowerCase().includes(q) ||
+          c.chatJid.toLowerCase().includes(q);
         if (!matchesSearch) return false;
-        if (activeFilter === "unread") return (c.unreadCount ?? 0) > 0;
+        if (activeFilter === "viewonce") return c.isViewOnce;
+        if (activeFilter === "media")
+          return (
+            c.lastMessageType !== null &&
+            c.lastMessageType !== "conversation" &&
+            c.lastMessageType !== "extendedTextMessage"
+          );
+        if (activeFilter === "fromme") return c.fromMe;
         return true;
       }),
     [conversations, query, activeFilter]
@@ -160,8 +176,9 @@ export default function ChatTrackerScreen() {
     setPrivacyMode((v) => !v);
   }, []);
 
-  const handleMute = useCallback((item: Conversation) => {
-    Alert.alert(`Mute ${item.contactName}`, "Silence alerts for this conversation?", [
+  const handleMute = useCallback((item: Chat) => {
+    const name = chatDisplayName(item);
+    Alert.alert(`Mute ${name}`, "Silence alerts for this conversation?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Mute",
@@ -170,16 +187,17 @@ export default function ChatTrackerScreen() {
     ]);
   }, []);
 
-  const handleArchive = useCallback((item: Conversation) => {
+  const handleArchive = useCallback((item: Chat) => {
+    const name = chatDisplayName(item);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    Alert.alert(`Archive ${item.contactName}`, "Move this conversation to archive?", [
+    Alert.alert(`Archive ${name}`, "Move this conversation to archive?", [
       { text: "Cancel", style: "cancel" },
       { text: "Archive", onPress: () => {} },
     ]);
   }, []);
 
   const renderItem = useCallback(
-    ({ item }: { item: Conversation }) => (
+    ({ item }: { item: Chat }) => (
       <SwipeableRow
         leftActions={[
           {
@@ -201,7 +219,9 @@ export default function ChatTrackerScreen() {
         <ConversationItem
           conversation={item}
           privacyMode={privacyMode}
-          onPress={() => router.push(`/chat/${item.contactId}` as any)}
+          onPress={() =>
+            router.push(`/chat/${encodeURIComponent(item.chatJid)}` as any)
+          }
         />
       </SwipeableRow>
     ),
@@ -218,9 +238,9 @@ export default function ChatTrackerScreen() {
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
             <Text style={[typography.h3, { color: "#fff" }]}>Chat Tracker</Text>
-            {totalUnread > 0 && (
+            {totalViewOnce > 0 && (
               <Text style={[typography.small, { color: "rgba(255,255,255,0.75)" }]}>
-                {totalUnread} unread message{totalUnread !== 1 ? "s" : ""}
+                {totalViewOnce} view-once media recovered
               </Text>
             )}
           </View>
@@ -337,19 +357,19 @@ export default function ChatTrackerScreen() {
       ) : filtered.length === 0 ? (
         <EmptyState
           icon="chatbubbles-outline"
-          title={query ? "No results found" : conversations.length === 0 ? "No conversations yet" : "No conversations match"}
+          title={query ? "No results found" : conversations.length === 0 ? "No chats yet" : "No chats match"}
           subtitle={
             query
-              ? `No conversations matching "${query}"`
+              ? `No chats matching "${query}"`
               : conversations.length === 0
-              ? "Conversations from tracked contacts will appear here"
+              ? "Messages captured from your linked WhatsApp will appear here"
               : "Try a different filter or search term"
           }
         />
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={(item) => item.chatJid}
           renderItem={renderItem}
           refreshControl={
             <RefreshControl

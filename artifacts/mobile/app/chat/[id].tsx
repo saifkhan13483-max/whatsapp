@@ -109,15 +109,63 @@ function highlightKeywords(
   );
 }
 
+interface ChatMsg {
+  id: number;
+  fromMe: boolean;
+  senderName: string | null;
+  messageType: string;
+  textContent: string | null;
+  isViewOnce: boolean;
+  isForwarded: boolean;
+  timestamp: string;
+}
+
+interface PageResult {
+  messages: ChatMsg[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+function msgTypeToSimple(t: string): Message["type"] {
+  if (t.includes("image")) return "image";
+  if (t.includes("video")) return "video";
+  if (t.includes("audio") || t.includes("ptt")) return "voice";
+  return "text";
+}
+
+function toMessage(r: ChatMsg): Message {
+  return {
+    id: r.id,
+    content: r.textContent ?? "",
+    direction: r.fromMe ? "sent" : "received",
+    timestamp:
+      typeof r.timestamp === "string"
+        ? r.timestamp
+        : new Date(r.timestamp).toISOString(),
+    type: msgTypeToSimple(r.messageType),
+    isViewOnce: r.isViewOnce,
+  };
+}
+
 export default function ChatViewScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const contactId = parseInt(id ?? "0", 10);
 
-  const { data: contact } = useContact(contactId);
+  const isJid = (id ?? "").includes("@");
+  const chatJid = isJid ? (id ?? "") : null;
+  const numericContactId = isJid ? NaN : parseInt(id ?? "0", 10);
+
+  const { data: contact } = useContact(isNaN(numericContactId) ? 0 : numericContactId);
   const { data: kwAlerts = [] } = useKeywordAlerts();
   const keywords = kwAlerts.map((k: any) => k.keyword ?? k.word ?? "").filter(Boolean);
+
+  const headerName = contact?.name
+    ? contact.name
+    : chatJid
+    ? chatJid.split("@")[0]
+    : "Chat";
 
   const [searchMode, setSearchMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -129,11 +177,18 @@ export default function ChatViewScreen() {
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ["messages", contactId],
-    queryFn: ({ pageParam = 1 }) =>
-      apiFetch<Message[]>(
-        `/messages/${contactId}?page=${pageParam}&limit=30`
-      ).catch(() => []),
+    queryKey: ["messages", chatJid ?? numericContactId],
+    queryFn: async ({ pageParam = 1 }) => {
+      if (chatJid) {
+        const result = await apiFetch<PageResult>(
+          `/chats/${encodeURIComponent(chatJid)}/messages?page=${pageParam}&limit=30`
+        ).catch(() => ({ messages: [], total: 0, page: 1, limit: 30 }));
+        return result.messages.map(toMessage);
+      }
+      return apiFetch<Message[]>(
+        `/messages/${numericContactId}?page=${pageParam}&limit=30`
+      ).catch(() => []);
+    },
     initialPageParam: 1,
     getNextPageParam: (last, all) =>
       last.length === 30 ? all.length + 1 : undefined,
@@ -330,15 +385,13 @@ export default function ChatViewScreen() {
 
         {!searchMode && (
           <>
-            {contact ? (
-              <AvatarCircle name={contact.name} size={36} isOnline={isOnline} />
-            ) : null}
+            <AvatarCircle name={headerName} size={36} isOnline={isOnline ?? false} />
             <View style={{ flex: 1 }}>
               <Text
                 style={[typography.bodyMedium, { color: colors.headerText }]}
                 numberOfLines={1}
               >
-                {contact?.name ?? "Chat"}
+                {headerName}
               </Text>
               <View style={styles.statusRow}>
                 {isOnline && <PulsingDot size={6} />}
@@ -385,10 +438,10 @@ export default function ChatViewScreen() {
           />
         </TouchableOpacity>
 
-        {!searchMode && (
+        {!searchMode && !isNaN(numericContactId) && numericContactId > 0 && (
           <TouchableOpacity
             style={styles.btn}
-            onPress={() => router.push(`/contact/${contactId}` as any)}
+            onPress={() => router.push(`/contact/${numericContactId}` as any)}
             accessibilityLabel="View contact details"
             accessibilityRole="button"
           >

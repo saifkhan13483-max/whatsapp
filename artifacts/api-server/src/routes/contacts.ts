@@ -14,8 +14,8 @@ import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
 import {
   subscribeContact,
   removeTrackedContact,
-  getActiveSocket,
 } from "../services/presenceTracker.js";
+import { getActiveSocket } from "../lib/whatsappSessionManager.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -306,6 +306,57 @@ router.get("/:id/sessions", async (req: AuthRequest, res) => {
     res.json(sessions);
   } catch {
     res.status(500).json({ error: "Failed to fetch sessions" });
+  }
+});
+
+router.get("/:id/timeline", async (req: AuthRequest, res) => {
+  try {
+    const id = Number(req.params["id"]);
+    const [contact] = await db
+      .select()
+      .from(contactsTable)
+      .where(and(eq(contactsTable.id, id), eq(contactsTable.userId, req.userId!)))
+      .limit(1);
+    if (!contact) {
+      res.status(404).json({ error: "Contact not found" });
+      return;
+    }
+    const from = req.query["from"]
+      ? new Date(req.query["from"] as string)
+      : new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const to = req.query["to"] ? new Date(req.query["to"] as string) : new Date();
+
+    const sessions = await db
+      .select()
+      .from(activitySessionsTable)
+      .where(
+        and(
+          eq(activitySessionsTable.contactId, id),
+          gte(activitySessionsTable.startTime, from),
+          lte(activitySessionsTable.startTime, to)
+        )
+      )
+      .orderBy(activitySessionsTable.startTime);
+
+    const events = sessions.flatMap((s) => {
+      const evs: { type: "online" | "offline"; timestamp: string; durationMinutes?: number }[] = [];
+      evs.push({ type: "online", timestamp: s.startTime.toISOString() });
+      if (s.endTime) {
+        evs.push({ type: "offline", timestamp: s.endTime.toISOString(), durationMinutes: s.durationMinutes });
+      }
+      return evs;
+    });
+
+    res.json({
+      contactId: id,
+      contactName: contact.name,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      events,
+      sessions,
+    });
+  } catch {
+    res.status(500).json({ error: "Failed to fetch timeline" });
   }
 });
 
