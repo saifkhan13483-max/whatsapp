@@ -1,4 +1,5 @@
 import makeWASocket, {
+  Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
   jidEncode,
@@ -252,7 +253,7 @@ export async function requestPairingCode(
       auth: state,
       printQRInTerminal: false,
       logger: logger.child({ component: "baileys", userId }) as any,
-      browser: ["WaTracker Pro", "Chrome", "127.0.0"] as [string, string, string],
+      browser: Browsers.ubuntu("Chrome"),
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: false,
@@ -608,7 +609,7 @@ export async function reconnect(
       auth: state,
       printQRInTerminal: false,
       logger: logger.child({ component: "baileys-reconnect", userId }) as any,
-      browser: ["WaTracker Pro", "Chrome", "127.0.0"] as [string, string, string],
+      browser: Browsers.ubuntu("Chrome"),
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: false,
