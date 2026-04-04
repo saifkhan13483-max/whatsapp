@@ -302,6 +302,7 @@ export async function requestPairingCode(
       if (connection === "close") {
         const loggedOut = boomStatus === DisconnectReason.loggedOut;
         const restartRequired = boomStatus === DisconnectReason.restartRequired;
+        const qrRefsEnded = boomMessage === "QR refs attempts ended";
 
         logger.warn(
           {
@@ -310,6 +311,7 @@ export async function requestPairingCode(
             boomMessage,
             connectionAccepted: entry.connectionAccepted,
             hadPairingCode: !!entry.pairingCode,
+            qrRefsEnded,
           },
           "WhatsApp connection closed"
         );
@@ -353,6 +355,18 @@ export async function requestPairingCode(
               timestamp: new Date().toISOString(),
             });
           }
+          return;
+        }
+
+        // Baileys internally cycles QR codes even in pairing-code mode.
+        // After ~5 cycles (~3 min) it throws "QR refs attempts ended" and closes the socket.
+        // This happens independently of whether the user entered the code on their phone.
+        // creds.me is already set by requestPairingCode(), so we can reconnect and
+        // WhatsApp will still honour the code if the user enters it within the validity window.
+        if (qrRefsEnded && entry.pairingCode && !entry.connectionAccepted) {
+          activeSockets.delete(userId);
+          logger.info({ userId }, "QR refs ended while pairing code active — reconnecting to keep session alive");
+          scheduleReconnect(userId, 500);
           return;
         }
 
