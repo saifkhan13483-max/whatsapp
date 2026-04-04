@@ -352,12 +352,72 @@ export async function requestPairingCode(
 
     let code: string;
     try {
-      // IMPORTANT: requestPairingCode must be called immediately after makeWASocket,
-      // WITHOUT awaiting waitForSocketOpen() first. Calling waitForSocketOpen() first
-      // lets Baileys commit to QR-code registration mode, then requestPairingCode
-      // conflicts with the already-started handshake — WhatsApp rejects the pairing.
-      // Baileys queues the pairing code request internally before the handshake begins
-      // when called this way, ensuring the connection runs in pairing-code mode.
+      // Step 1: Wait for the WebSocket to physically open.
+      //
+      // Why this order matters:
+      //   - creds.me is NULL at this point (fresh session cleared above).
+      //   - When the WebSocket opens, validateConnection() runs and sees creds.me == null,
+      //     so it sends generateRegistrationNode (includes device pairing data / public keys).
+      //     WhatsApp accepts this for new device pairing.
+      //   - If we called requestPairingCode() first, it would set creds.me synchronously,
+      //     causing validateConnection() to use generateLoginNode instead. WhatsApp rejects
+      //     loginNode when there is no existing session, closing the connection immediately.
+      //   - Additionally, requestPairingCode's internal sendNode() calls sendRawMessage()
+      //     which checks ws.isOpen — if the WebSocket is still CONNECTING it throws
+      //     "Connection Closed" before any message is sent.
+      await Promise.race([
+        sock.waitForSocketOpen(),
+        new Promise<never>((_, rej) =>
+          setTimeout(
+            () => rej(makeApiError(
+              "Connection timed out — WhatsApp servers did not respond. Check your internet and try again.",
+              408
+            )),
+            PAIRING_REQUEST_TIMEOUT_MS
+          )
+        ),
+      ]);
+
+      // Step 2: Wait for validateConnection() to complete the Noise handshake.
+      //
+      // validateConnection() runs asynchronously inside the WebSocket 'open' handler.
+      // It needs ~100-400 ms (1-2 network round trips + local crypto) to:
+      //   clientHello → serverHello → noise.processHandshake → clientFinish → noise.finishInit()
+      // After finishInit(), noise.encodeFrame() encrypts properly (isFinished = true).
+      // Before finishInit(), encodeFrame() sends data in plaintext — WhatsApp rejects it.
+      //
+      // We wait 500 ms as a conservative upper bound, aborting early if the connection closes.
+      await new Promise<void>((resolve, reject) => {
+        let done = false;
+
+        const cleanup = () => {
+          done = true;
+          clearTimeout(timer);
+          sock.ev.off('connection.update', onConnUpdate);
+        };
+
+        const onConnUpdate = (update: { connection?: string }) => {
+          if (update.connection === 'close' && !done) {
+            cleanup();
+            reject(makeApiError(
+              "WhatsApp closed the connection. Make sure the phone number has an active WhatsApp account and try again.",
+              503
+            ));
+          }
+        };
+
+        const timer = setTimeout(() => {
+          if (!done) { cleanup(); resolve(); }
+        }, 500);
+
+        sock.ev.on('connection.update', onConnUpdate);
+      });
+
+      // Step 3: Noise handshake is complete. Send the pairing code IQ.
+      //
+      // requestPairingCode() sets creds.me and sends the link_code_companion_reg IQ
+      // with the phone number JID. WhatsApp uses this to identify which phone receives
+      // the 8-character pairing code.
       const codePromise = sock.requestPairingCode(cleanPhone);
 
       const timeoutPromise = new Promise<never>((_, rej) =>
