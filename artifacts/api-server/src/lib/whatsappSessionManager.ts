@@ -172,7 +172,8 @@ function scheduleReconnect(userId: number, delayMs: number): void {
 
 export async function requestPairingCode(
   userId: number,
-  phoneNumber: string
+  phoneNumber: string,
+  options?: { skipRateLimit?: boolean }
 ): Promise<{ pairingCode: string; expiresAt: string }> {
   if (pairingInProgress.has(userId)) {
     throw makeApiError(
@@ -181,7 +182,7 @@ export async function requestPairingCode(
     );
   }
 
-  if (!(await checkRateLimit(userId))) {
+  if (!options?.skipRateLimit && !(await checkRateLimit(userId))) {
     throw makeApiError(
       "Too many attempts. Please wait 10 minutes and try again.",
       429
@@ -361,12 +362,40 @@ export async function requestPairingCode(
         // Baileys internally cycles QR codes even in pairing-code mode.
         // After ~5 cycles (~3 min) it throws "QR refs attempts ended" and closes the socket.
         // This happens independently of whether the user entered the code on their phone.
-        // creds.me is already set by requestPairingCode(), so we can reconnect and
-        // WhatsApp will still honour the code if the user enters it within the validity window.
+        //
+        // IMPORTANT: Do NOT call scheduleReconnect() here. That uses reconnect() which loads
+        // saved credentials (creds.me is set from requestPairingCode) and connects in LOGIN mode
+        // (generateLoginNode). WhatsApp then sees the companion as an existing device trying to
+        // reconnect, NOT as a new companion waiting to be paired. When the user enters the code
+        // on their phone, WhatsApp rejects it with "Couldn't link device — check phone number."
+        //
+        // The correct fix: auto-request a fresh pairing code in registration mode.
+        // This creates a new socket with generateRegistrationNode and sends a new
+        // link_code_companion_reg IQ. The new code is broadcast to the client immediately.
         if (qrRefsEnded && entry.pairingCode && !entry.connectionAccepted) {
           activeSockets.delete(userId);
-          logger.info({ userId }, "QR refs ended while pairing code active — reconnecting to keep session alive");
-          scheduleReconnect(userId, 500);
+          logger.info({ userId }, "QR refs ended while pairing code active — auto-requesting new pairing code");
+
+          setTimeout(async () => {
+            try {
+              const sessionRows = await db
+                .select({ phoneNumber: whatsappSessionsTable.phoneNumber })
+                .from(whatsappSessionsTable)
+                .where(eq(whatsappSessionsTable.userId, userId))
+                .limit(1);
+
+              if (!sessionRows.length || !sessionRows[0].phoneNumber) {
+                logger.warn({ userId }, "QR refs ended: no stored phone number — cannot auto-renew pairing code");
+                return;
+              }
+
+              const storedPhone = sessionRows[0].phoneNumber;
+              logger.info({ userId, maskedPhone: maskPhone(storedPhone) }, "Auto-renewing pairing code after QR refs ended");
+              await requestPairingCode(userId, storedPhone, { skipRateLimit: true });
+            } catch (err) {
+              logger.warn({ err, userId }, "Auto-renew pairing code after QR refs ended failed");
+            }
+          }, 500);
           return;
         }
 
