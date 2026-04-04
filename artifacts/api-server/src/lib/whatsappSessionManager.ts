@@ -332,9 +332,27 @@ export async function requestPairingCode(
           return;
         }
 
-        if (restartRequired && entry.connectionAccepted) {
+        if (restartRequired) {
           activeSockets.delete(userId);
-          scheduleReconnect(userId, 1000);
+          // 515 = restart required. This fires in two cases:
+          // 1. After an established session needs to reconnect (connectionAccepted = true)
+          // 2. After WhatsApp accepts a pairing code — it closes with 515 and expects
+          //    the client to reconnect with the newly saved credentials (connectionAccepted = false).
+          //    We detect case 2 by checking whether creds.me was set during the session.
+          if (entry.connectionAccepted || state.creds.me != null) {
+            scheduleReconnect(userId, 1000);
+          } else {
+            await upsertSession(userId, {
+              status: "error",
+              lastError: "Connection restarted before pairing completed. Please try again.",
+            });
+            broadcast(userId, {
+              type: "session_disconnected",
+              userId,
+              reason: "connection_failed",
+              timestamp: new Date().toISOString(),
+            });
+          }
           return;
         }
 
