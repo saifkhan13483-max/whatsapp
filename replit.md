@@ -95,6 +95,39 @@ Full-featured WhatsApp activity monitoring & parental control app.
 - Blue accent: #34B7F1, Purple: #7C4DFF
 - Dark background: #0b141a, Dark surface: #111b21
 
+## WhatsApp Web Bridge
+
+A standalone web-based WhatsApp bridge using `whatsapp-web.js` (Puppeteer/Chromium).
+
+### Web Page
+- **URL**: `GET /whatsapp` — served as a plain HTML page, no auth required
+- Dark-themed UI with status indicator, QR/Pairing Code tabs, message log, security settings
+
+### API Routes (no auth required, registered at `/api/wa/`)
+- `GET /api/wa/status` — `{ ready, initializing, hasQR, pairingCode, phoneNumber, authorizedNumber, messageCount }`
+- `GET /api/wa/qr` — `{ qr: "<base64 data URL>" }` — returns 404 if no QR available
+- `POST /api/wa/start` — starts the bridge (fire-and-forget)
+- `POST /api/wa/stop` — destroys the client
+- `POST /api/wa/pairing-code { number }` — returns `{ code: "ABCD-1234" }`
+- `POST /api/wa/authorize { number | null }` — restrict commands to one sender
+- `GET /api/wa/messages` — returns last 50 messages
+
+### Key Files
+- `artifacts/api-server/src/services/waWebBridge.ts` — bridge singleton (Client lifecycle, QR, pairing, messages)
+- `artifacts/api-server/src/routes/waWebBridge.ts` — Express routes (mounted before chatRouter to bypass global auth)
+- `artifacts/api-server/public/whatsapp.html` — full frontend UI (served from Express at `/whatsapp`)
+
+### Chromium Search Order
+1. `/nix/store/0n9rl5l9syy808xi9bk4f6dhnfrvhkww-playwright-browsers-chromium/chromium-1080/chrome-linux/chrome`
+2. `/nix/store/qa9cnw4v5xkxyip6mb9kxqfq1z4x2dx1-chromium-138.0.7204.100/bin/chromium`
+3. `/usr/bin/chromium` → `/usr/bin/chromium-browser` → `/usr/bin/google-chrome`
+
+### Notes
+- `whatsapp-web.js` is CJS-only; imported via `createRequire` to work with the ESM bundle
+- `whatsapp-web.js` is in esbuild's `external` list so it's not bundled
+- Metro blockList updated to exclude `@pedroslopez/moduleraid` and `whatsapp-web.js` packages from Expo bundling
+- WhatsApp sessions persisted to `./.whatsapp-session` via `LocalAuth` strategy
+
 ## Backend API Server
 
 Express 5 REST API running on port 8080.

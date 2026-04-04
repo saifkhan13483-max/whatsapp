@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhatsApp Bridge</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --green: #25d366;
+      --green-dark: #1ead53;
+      --bg: #0a0f0d;
+      --surface: #111a16;
+      --surface2: #1a2b23;
+      --border: #2a3f33;
+      --text: #e8f5ee;
+      --muted: #7aad8f;
+      --danger: #e74c3c;
+      --warning: #f39c12;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 800px; margin: 0 auto; }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header-icon {
+      width: 46px; height: 46px;
+      background: var(--green);
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px;
+    }
+    .header h1 { font-size: 22px; font-weight: 700; }
+    .header p { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+    /* Status badge */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 18px;
+      margin-bottom: 20px;
+    }
+    .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      flex-shrink: 0;
+      transition: background .3s;
+    }
+    .dot.offline { background: #555; }
+    .dot.initializing { background: var(--warning); animation: pulse 1s infinite; }
+    .dot.online { background: var(--green); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .status-text { font-weight: 600; font-size: 15px; }
+    .status-sub { color: var(--muted); font-size: 13px; margin-left: auto; }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 10px 18px;
+      border-radius: 9px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+    .btn-primary { background: var(--green); color: #000; }
+    .btn-primary:hover:not(:disabled) { background: var(--green-dark); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover:not(:disabled) { opacity: .85; }
+    .btn-outline {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-outline:hover:not(:disabled) { border-color: var(--green); color: var(--green); }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      background: var(--surface2);
+      padding: 4px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+    }
+    .tab {
+      flex: 1;
+      padding: 9px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .tab.active { background: var(--surface); color: var(--text); }
+
+    /* QR */
+    .qr-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 20px;
+    }
+    .qr-wrap img {
+      width: 220px; height: 220px;
+      border-radius: 12px;
+      border: 3px solid var(--green);
+      background: #fff;
+    }
+    .qr-placeholder {
+      width: 220px; height: 220px;
+      border-radius: 12px;
+      border: 2px dashed var(--border);
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .qr-hint { font-size: 13px; color: var(--muted); text-align: center; max-width: 280px; }
+    .refresh-note { font-size: 11px; color: #4a6b58; }
+
+    /* Pairing */
+    .pairing-form { display: flex; gap: 10px; margin-bottom: 16px; }
+    .pairing-form input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 14px;
+    }
+    .pairing-form input::placeholder { color: var(--muted); }
+    .pairing-form input:focus { outline: none; border-color: var(--green); }
+    .code-display {
+      background: var(--surface2);
+      border: 1px solid var(--green);
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+      margin-top: 14px;
+    }
+    .code-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+    .code-value {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: .15em;
+      color: var(--green);
+      font-family: 'Courier New', monospace;
+    }
+    .code-hint { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.6; }
+
+    /* Connected */
+    .connected-card {
+      text-align: center;
+      padding: 30px 20px;
+    }
+    .connected-icon {
+      width: 64px; height: 64px;
+      background: linear-gradient(135deg, var(--green), #1ead53);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 32px;
+      margin: 0 auto 16px;
+    }
+    .connected-phone { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+    .connected-sub { font-size: 13px; color: var(--muted); margin-bottom: 22px; }
+
+    /* Security */
+    .auth-form { display: flex; gap: 10px; flex-wrap: wrap; }
+    .auth-form input {
+      flex: 1;
+      min-width: 200px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 14px;
+    }
+    .auth-form input:focus { outline: none; border-color: var(--green); }
+    .auth-hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+    .auth-current {
+      margin-top: 12px;
+      font-size: 13px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .auth-current span { color: var(--green); font-weight: 600; }
+
+    /* Messages */
+    .messages-list {
+      max-height: 280px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .messages-list::-webkit-scrollbar { width: 4px; }
+    .messages-list::-webkit-scrollbar-track { background: var(--surface2); }
+    .messages-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .msg-item {
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 10px 12px;
+      border-left: 3px solid var(--green);
+    }
+    .msg-from { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+    .msg-body { font-size: 14px; word-break: break-word; }
+    .msg-time { font-size: 10px; color: #4a6b58; margin-top: 4px; }
+    .no-msgs { text-align: center; color: var(--muted); font-size: 14px; padding: 30px 0; }
+
+    /* Guide */
+    .guide-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 500px) { .guide-grid { grid-template-columns: 1fr; } }
+    .guide-item {
+      background: var(--surface2);
+      border-radius: 9px;
+      padding: 12px 14px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .guide-cmd {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-family: monospace;
+      font-size: 13px;
+      color: var(--green);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .guide-desc { font-size: 13px; color: var(--muted); }
+
+    /* Alerts */
+    .alert {
+      padding: 12px 16px;
+      border-radius: 9px;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+    .alert-warn { background: rgba(243,156,18,.12); border: 1px solid rgba(243,156,18,.3); color: #f39c12; }
+    .alert-success { background: rgba(37,211,102,.1); border: 1px solid rgba(37,211,102,.25); color: var(--green); }
+
+    .hidden { display: none !important; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">📱</div>
+    <div>
+      <h1>WhatsApp Bridge</h1>
+      <p>Link your WhatsApp account to enable monitoring &amp; automation</p>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div class="dot offline" id="statusDot"></div>
+    <span class="status-text" id="statusText">Offline</span>
+    <span class="status-sub" id="statusSub"></span>
+  </div>
+
+  <!-- Connection panel (shown when not connected) -->
+  <div id="connectPanel">
+    <!-- Start / Tabs -->
+    <div class="card">
+      <div class="card-title">Connect WhatsApp</div>
+
+      <div id="startSection">
+        <p style="font-size:14px; color:var(--muted); margin-bottom:16px;">
+          Start the bridge to link your WhatsApp account via QR code or pairing code.
+        </p>
+        <button class="btn btn-primary" id="startBtn" onclick="startBridge()">▶ Start Bridge</button>
+      </div>
+
+      <div id="linkSection" class="hidden">
+        <div class="tabs">
+          <button class="tab active" id="tabQR" onclick="switchTab('qr')">📷 QR Code</button>
+          <button class="tab" id="tabPair" onclick="switchTab('pair')">🔢 Pairing Code</button>
+        </div>
+
+        <!-- QR Tab -->
+        <div id="qrPanel">
+          <div class="qr-wrap">
+            <div class="qr-placeholder" id="qrPlaceholder">
+              <span style="font-size:32px">⏳</span>
+              <span>Waiting for QR code…</span>
+            </div>
+            <img id="qrImg" class="hidden" alt="WhatsApp QR Code" />
+            <p class="qr-hint">Open WhatsApp → More → Linked Devices → Link a Device, then scan this code.</p>
+            <p class="refresh-note" id="refreshNote"></p>
+          </div>
+        </div>
+
+        <!-- Pairing Tab -->
+        <div id="pairPanel" class="hidden">
+          <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
+            Enter your phone number in international format (without the + sign) and click GET CODE.
+            Then open WhatsApp → Settings → Linked Devices → Link with phone number → enter the code shown below.
+          </p>
+          <div class="pairing-form">
+            <input type="tel" id="phoneInput" placeholder="e.g. 12025551234" />
+            <button class="btn btn-primary" id="getCodeBtn" onclick="getPairingCode()">GET CODE</button>
+          </div>
+          <div id="pairingWarn" class="alert alert-warn hidden">
+            ⚠ Wait for the bridge to start (QR should appear in the QR tab first), then switch back here.
+          </div>
+          <div id="codeDisplay" class="code-display hidden">
+            <div class="code-label">Your Pairing Code</div>
+            <div class="code-value" id="codeValue">----</div>
+            <div class="code-hint">
+              On your phone: WhatsApp → Settings → Linked Devices →<br/>
+              Tap <strong>"Link with phone number"</strong> → Enter the code above
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connected panel -->
+  <div id="connectedPanel" class="hidden">
+    <div class="card connected-card">
+      <div class="connected-icon">✓</div>
+      <div class="connected-phone" id="connPhone">Connected</div>
+      <div class="connected-sub">WhatsApp Bridge is active and receiving messages</div>
+      <div class="row" style="justify-content:center;">
+        <button class="btn btn-danger" onclick="stopBridge()">✕ Disconnect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Security -->
+  <div class="card">
+    <div class="card-title">🔒 Security — Restrict Commands</div>
+    <div class="auth-form">
+      <input type="tel" id="authInput" placeholder="Authorized number (e.g. 12025551234) — leave blank to allow all" />
+      <button class="btn btn-primary" onclick="setAuthorized()">Save</button>
+      <button class="btn btn-outline" onclick="clearAuthorized()">Allow All</button>
+    </div>
+    <div class="auth-hint">Only messages from this number will be processed. Leave blank to accept from anyone.</div>
+    <div class="auth-current hidden" id="authCurrent">
+      Restricting to: <span id="authCurrentNum"></span>
+    </div>
+  </div>
+
+  <!-- Messages log -->
+  <div class="card">
+    <div class="card-title" style="display:flex;align-items:center;gap:10px;">
+      💬 Recent Messages
+      <button class="btn btn-outline" onclick="loadMessages()" style="padding:4px 12px;font-size:12px;margin-left:auto;">Refresh</button>
+    </div>
+    <div class="messages-list" id="msgList">
+      <div class="no-msgs">No messages yet</div>
+    </div>
+  </div>
+
+  <!-- Usage Guide -->
+  <div class="card">
+    <div class="card-title">📖 Usage Guide</div>
+    <div class="guide-grid">
+      <div class="guide-item">
+        <span class="guide-cmd">any text</span>
+        <span class="guide-desc">Send as a browser command to be executed</span>
+      </div>
+      <div class="guide-item">
+        <span class="guide-cmd">!stop</span>
+        <span class="guide-desc">Abort the currently running task</span>
+      </div>
+      <div class="guide-item">
+        <span class="guide-cmd">!status</span>
+        <span class="guide-desc">Ping the bridge to confirm it's alive</span>
+      </div>
+      <div class="guide-item">
+        <span class="guide-cmd">!help</span>
+        <span class="guide-desc">Show available commands in chat</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = '/api/wa';
+let statusInterval, qrInterval, msgInterval;
+let currentTab = 'qr';
+let hasQRFired = false;
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabQR').classList.toggle('active', tab === 'qr');
+  document.getElementById('tabPair').classList.toggle('active', tab === 'pair');
+  document.getElementById('qrPanel').classList.toggle('hidden', tab !== 'qr');
+  document.getElementById('pairPanel').classList.toggle('hidden', tab !== 'pair');
+}
+
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  return res.json().catch(() => ({}));
+}
+
+async function startBridge() {
+  document.getElementById('startBtn').disabled = true;
+  await apiFetch('/start', { method: 'POST' });
+  document.getElementById('startSection').classList.add('hidden');
+  document.getElementById('linkSection').classList.remove('hidden');
+}
+
+async function stopBridge() {
+  await apiFetch('/stop', { method: 'POST' });
+  location.reload();
+}
+
+async function getPairingCode() {
+  const phone = document.getElementById('phoneInput').value.trim().replace(/\D/g,'');
+  if (!phone) { alert('Please enter a phone number'); return; }
+
+  if (!hasQRFired) {
+    document.getElementById('pairingWarn').classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('getCodeBtn');
+  btn.disabled = true; btn.textContent = '…';
+
+  const data = await apiFetch('/pairing-code', {
+    method: 'POST',
+    body: JSON.stringify({ number: phone }),
+  });
+
+  btn.disabled = false; btn.textContent = 'GET CODE';
+
+  if (data.code) {
+    document.getElementById('codeValue').textContent = data.code;
+    document.getElementById('codeDisplay').classList.remove('hidden');
+    document.getElementById('pairingWarn').classList.add('hidden');
+  } else {
+    alert(data.error || 'Failed to get pairing code');
+  }
+}
+
+async function setAuthorized() {
+  const num = document.getElementById('authInput').value.trim().replace(/\D/g,'') || null;
+  await apiFetch('/authorize', { method: 'POST', body: JSON.stringify({ number: num }) });
+  updateAuthUI(num);
+}
+
+async function clearAuthorized() {
+  await apiFetch('/authorize', { method: 'POST', body: JSON.stringify({ number: null }) });
+  document.getElementById('authInput').value = '';
+  updateAuthUI(null);
+}
+
+function updateAuthUI(num) {
+  const el = document.getElementById('authCurrent');
+  if (num) {
+    el.classList.remove('hidden');
+    document.getElementById('authCurrentNum').textContent = '+' + num;
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
+async function loadMessages() {
+  const msgs = await apiFetch('/messages');
+  const list = document.getElementById('msgList');
+  if (!Array.isArray(msgs) || msgs.length === 0) {
+    list.innerHTML = '<div class="no-msgs">No messages yet</div>';
+    return;
+  }
+  list.innerHTML = msgs.slice().reverse().map(m => {
+    const from = m.from.replace(/@.*/, '');
+    const time = new Date(m.timestamp).toLocaleTimeString();
+    return `<div class="msg-item">
+      <div class="msg-from">+${from} ${m.isGroup ? '(group)' : ''}</div>
+      <div class="msg-body">${escHtml(m.body)}</div>
+      <div class="msg-time">${time}</div>
+    </div>`;
+  }).join('');
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function pollStatus() {
+  const s = await apiFetch('/status').catch(() => null);
+  if (!s) return;
+
+  hasQRFired = s.hasQR || s.pairingCode;
+
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+  const sub = document.getElementById('statusSub');
+
+  if (s.ready) {
+    dot.className = 'dot online';
+    txt.textContent = 'Online';
+    sub.textContent = s.phoneNumber ? '+' + s.phoneNumber : '';
+    document.getElementById('connectPanel').classList.add('hidden');
+    document.getElementById('connectedPanel').classList.remove('hidden');
+    document.getElementById('connPhone').textContent = s.phoneNumber ? '+' + s.phoneNumber : 'Connected';
+    clearInterval(qrInterval);
+  } else if (s.initializing) {
+    dot.className = 'dot initializing';
+    txt.textContent = 'Initializing…';
+    sub.textContent = 'Starting WhatsApp connection';
+    document.getElementById('startSection').classList.add('hidden');
+    document.getElementById('linkSection').classList.remove('hidden');
+  } else {
+    dot.className = 'dot offline';
+    txt.textContent = 'Offline';
+    sub.textContent = '';
+  }
+
+  if (s.authorizedNumber) {
+    updateAuthUI(s.authorizedNumber);
+    document.getElementById('authInput').value = s.authorizedNumber;
+  }
+}
+
+async function pollQR() {
+  const data = await apiFetch('/qr').catch(() => null);
+  const img = document.getElementById('qrImg');
+  const placeholder = document.getElementById('qrPlaceholder');
+  const note = document.getElementById('refreshNote');
+
+  if (data && data.qr) {
+    img.src = data.qr;
+    img.classList.remove('hidden');
+    placeholder.classList.add('hidden');
+    note.textContent = 'QR refreshes every 4 seconds';
+  }
+}
+
+// Bootstrap
+pollStatus();
+loadMessages();
+
+statusInterval = setInterval(pollStatus, 3000);
+qrInterval = setInterval(pollQR, 4000);
+msgInterval = setInterval(loadMessages, 10000);
+</script>
+</body>
+</html>

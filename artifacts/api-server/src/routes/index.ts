@@ -14,11 +14,13 @@ import alertRulesRouter from "./alertRules.js";
 import geofenceRouter from "./geofence.js";
 import whatsappRouter from "./whatsapp.js";
 import trackerRouter from "./tracker.js";
+import waWebBridgeRouter from "./waWebBridge.js";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use("/auth", authRouter);
+router.use("/wa", waWebBridgeRouter);
 router.use("/contacts", contactsRouter);
 router.use(chatRouter);
 router.use("/chats", chatsRouter);

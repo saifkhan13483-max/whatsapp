@@ -1,0 +1,27 @@
+Build a WhatsApp Web linking system for my app using the whatsapp-web.js library. The system must support two connection methods:
+Method 1 — QR Code Scanning:
+Generate a QR code image using the qrcode npm package from the qr event emitted by the WhatsApp client. Display it in the browser as a <img> tag with the base64 data URL. Refresh it automatically every 4 seconds by polling GET /api/whatsapp/qr.
+Method 2 — Pairing Code (phone number):
+After the WhatsApp client is initialized and the first qr event fires (which means the client is ready to accept a pairing code), call client.requestPairingCode(phoneNumber) where phoneNumber is the user's number in international format without the + (e.g. 12025551234). Display the returned 8-character pairing code (e.g. ABCD-1234) prominently on screen. The user enters this code on their phone at WhatsApp → Linked Devices → Link with phone number → Enter code.
+Backend requirements (waClient.js / server.js):
+Use whatsapp-web.js with LocalAuth strategy to persist the session to ./.whatsapp-session
+For Puppeteer/Chromium, search these paths in order and use the first one that exists: /nix/store/0n9rl5l9syy808xi9bk4f6dhnfrvhkww-playwright-browsers-chromium/chromium-1080/chrome-linux/chrome, /usr/bin/chromium, /usr/bin/chromium-browser, /usr/bin/google-chrome. Pass the found path as executablePath in the puppeteer options.
+Puppeteer args must include: --no-sandbox, --disable-setuid-sandbox, --disable-gpu, --disable-dev-shm-usage, --no-zygote, --single-process
+Expose these REST API endpoints:
+GET /api/whatsapp/status → { ready, initializing, hasQR, pairingCode, phoneNumber, authorizedNumber, messageCount }
+GET /api/whatsapp/qr → { qr: "<base64 data URL>" }
+POST /api/whatsapp/start → starts the bridge (fire-and-forget, returns immediately)
+POST /api/whatsapp/stop → destroys the client
+POST /api/whatsapp/pairing-code with body { number: "12025551234" } → calls client.requestPairingCode(number) and returns { code: "ABCD-1234" }
+POST /api/whatsapp/authorize with body { number: "12025551234" | null } → sets the authorized sender number (null = allow all)
+GET /api/whatsapp/messages → returns last 50 messages log
+Frontend UI (single page /whatsapp):
+Show bridge status (Offline / Initializing / Online) with a colored dot
+Two tab/toggle buttons: "QR Code" and "Pairing Code"
+QR tab: shows the QR image, auto-refreshes every 4s when hasQR is true
+Pairing tab: shows an input field for phone number (international format, no +) and a "GET CODE" button. On click, calls POST /api/whatsapp/pairing-code and displays the returned code in large, styled text
+When connected, show a success state with the connected phone number and a Disconnect button
+Show a security section to restrict commands to a specific sender number
+Show a scrollable recent messages log
+Show a usage guide explaining: any text = browser command, !stop = abort task, !status = ping
+
