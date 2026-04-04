@@ -2,7 +2,6 @@ import makeWASocket, {
   Browsers,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  jidEncode,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
@@ -226,17 +225,17 @@ export async function requestPairingCode(
 
     const { state, saveCreds } = await useDbAuthState(userId);
 
-    // Pre-set creds.me to the phone number JID BEFORE creating the socket.
+    // Do NOT pre-set creds.me before creating the socket.
     //
     // Baileys' validateConnection() checks creds.me when the WebSocket opens:
-    //   - creds.me == null  → generateRegistrationNode (anonymous device, QR-code mode)
-    //   - creds.me is set   → generateLoginNode (device identifying itself by phone number)
+    //   - creds.me == null  → generateRegistrationNode (new companion device — correct for pairing)
+    //   - creds.me is set   → generateLoginNode (re-login an existing session — WRONG for pairing)
     //
-    // For pairing code, WhatsApp requires generateLoginNode so it knows WHICH phone to
-    // send the linking code to. Using generateRegistrationNode causes "Couldn't link device"
-    // because WhatsApp sees an anonymous device registration instead of a phone-number-linked
-    // pairing request.
-    state.creds.me = { id: jidEncode(cleanPhone, "s.whatsapp.net"), name: "~" };
+    // requestPairingCode() sets creds.me internally to the phone JID and sends the
+    // link_code_companion_reg IQ with the correct JID. Pre-setting it here causes
+    // generateLoginNode to run during the handshake, which tells WhatsApp "reconnect this
+    // existing device" instead of "register a new companion". WhatsApp then rejects the
+    // pairing with "Couldn't link device — check the phone number is correct."
 
     let version: [number, number, number];
     try {
