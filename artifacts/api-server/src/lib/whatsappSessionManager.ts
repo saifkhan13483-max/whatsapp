@@ -1,6 +1,7 @@
 import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
+  jidEncode,
   type WASocket,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
@@ -224,6 +225,18 @@ export async function requestPairingCode(
 
     const { state, saveCreds } = await useDbAuthState(userId);
 
+    // Pre-set creds.me to the phone number JID BEFORE creating the socket.
+    //
+    // Baileys' validateConnection() checks creds.me when the WebSocket opens:
+    //   - creds.me == null  → generateRegistrationNode (anonymous device, QR-code mode)
+    //   - creds.me is set   → generateLoginNode (device identifying itself by phone number)
+    //
+    // For pairing code, WhatsApp requires generateLoginNode so it knows WHICH phone to
+    // send the linking code to. Using generateRegistrationNode causes "Couldn't link device"
+    // because WhatsApp sees an anonymous device registration instead of a phone-number-linked
+    // pairing request.
+    state.creds.me = { id: jidEncode(cleanPhone, "s.whatsapp.net"), name: "~" };
+
     let version: [number, number, number];
     try {
       const result = await fetchLatestBaileysVersion();
@@ -354,17 +367,10 @@ export async function requestPairingCode(
     try {
       // Step 1: Wait for the WebSocket to physically open.
       //
-      // Why this order matters:
-      //   - creds.me is NULL at this point (fresh session cleared above).
-      //   - When the WebSocket opens, validateConnection() runs and sees creds.me == null,
-      //     so it sends generateRegistrationNode (includes device pairing data / public keys).
-      //     WhatsApp accepts this for new device pairing.
-      //   - If we called requestPairingCode() first, it would set creds.me synchronously,
-      //     causing validateConnection() to use generateLoginNode instead. WhatsApp rejects
-      //     loginNode when there is no existing session, closing the connection immediately.
-      //   - Additionally, requestPairingCode's internal sendNode() calls sendRawMessage()
-      //     which checks ws.isOpen — if the WebSocket is still CONNECTING it throws
-      //     "Connection Closed" before any message is sent.
+      // creds.me is already set (phone number JID) so validateConnection() will use
+      // generateLoginNode — the correct mode for pairing code. We cannot call
+      // requestPairingCode() yet because its internal sendRawMessage() checks ws.isOpen
+      // and throws "Connection Closed" immediately if the WebSocket is still CONNECTING.
       await Promise.race([
         sock.waitForSocketOpen(),
         new Promise<never>((_, rej) =>
