@@ -128,6 +128,23 @@ export default function ConnectWhatsAppScreen() {
     }
   }, [connectionStatus, currentStep]);
 
+  // When the server auto-renews the pairing code (e.g. after QR refs cycle),
+  // the new code arrives via polling in connectionStatus. Sync it to local state
+  // so the UI always shows the current valid code.
+  useEffect(() => {
+    if (
+      currentStep === 2 &&
+      connectionStatus?.status === "pending_pairing" &&
+      connectionStatus.pairingCode &&
+      connectionStatus.pairingCode !== pairingCode
+    ) {
+      setPairingCode(connectionStatus.pairingCode);
+      if (connectionStatus.pairingCodeExpiresAt) {
+        setPairingExpiresAt(connectionStatus.pairingCodeExpiresAt);
+      }
+    }
+  }, [connectionStatus, currentStep, pairingCode]);
+
   const stepOpacity = useSharedValue(1);
 
   function animateStep(nextStep: 1 | 2 | 3) {
